@@ -787,8 +787,12 @@ class AdminHandlers:
         await state.set_state(AdminStates.waiting_bank_forward)
         await callback.message.edit_text(
             "🏦 <b>Добавление банка</b>\n\n"
-            "📨 <b>Перешлите любое сообщение</b> из чата с банком.\n\n"
-            "<i>Бот автоматически определит Chat ID группы.</i>",
+            "Введите <b>Chat ID</b> группы банка.\n\n"
+            "<b>Как узнать Chat ID:</b>\n"
+            "1️⃣ Добавьте бота @RawDataBot в группу банка\n"
+            "2️⃣ Он покажет Chat ID (число вида <code>-100123456789</code>)\n"
+            "3️⃣ Скопируйте и отправьте сюда\n\n"
+            "<i>Или перешлите сообщение из канала/супергруппы</i>",
             reply_markup=self.kb.cancel_input(),
             parse_mode="HTML"
         )
@@ -797,28 +801,41 @@ class AdminHandlers:
     async def process_bank_forward(self, message: Message, state: FSMContext, db_user):
         """Обработка пересланного сообщения для добавления банка"""
         chat_id = None
+        chat_title = None
 
-        # Проверяем forward_from_chat (для групп)
+        # 1. Проверяем forward_from_chat (для каналов и супергрупп)
         if message.forward_from_chat:
             chat_id = message.forward_from_chat.id
             chat_title = message.forward_from_chat.title
-        # Если отправили число напрямую
+
+        # 2. Проверяем forward_origin (новый API Telegram)
+        elif hasattr(message, 'forward_origin') and message.forward_origin:
+            origin = message.forward_origin
+            if hasattr(origin, 'chat'):
+                chat_id = origin.chat.id
+                chat_title = getattr(origin.chat, 'title', None)
+
+        # 3. Если отправили число напрямую (Chat ID)
         elif message.text:
+            text = message.text.strip().replace(" ", "")
             try:
-                chat_id = int(message.text.strip())
-                chat_title = None
+                chat_id = int(text)
             except ValueError:
                 await message.answer(
                     "❌ Не удалось определить Chat ID.\n\n"
-                    "Перешлите сообщение из группы банка или введите Chat ID числом.",
-                    reply_markup=self.kb.cancel_input()
+                    "Введите Chat ID числом (например: <code>-1001234567890</code>)\n\n"
+                    "<b>Как узнать Chat ID:</b>\n"
+                    "• Добавьте @RawDataBot в группу банка\n"
+                    "• Или @getmyid_bot",
+                    reply_markup=self.kb.cancel_input(),
+                    parse_mode="HTML"
                 )
                 return
 
         if not chat_id:
             await message.answer(
                 "❌ Не удалось определить Chat ID.\n\n"
-                "Убедитесь, что пересылаете сообщение из <b>группы</b>, а не из личного чата.",
+                "Введите Chat ID числом или перешлите сообщение из <b>канала</b>.",
                 reply_markup=self.kb.cancel_input(),
                 parse_mode="HTML"
             )
