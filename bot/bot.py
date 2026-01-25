@@ -1,7 +1,7 @@
 import logging
 from aiogram import Bot, Dispatcher
 
-from handlers import ClientHandlers, ManagerHandlers
+from handlers import ClientHandlers, ManagerHandlers, AdminHandlers
 from database import DatabaseManager
 from database import ApplicationRepository, UserRepository, LogRepository, ApprovalRepository, BankRepository, CompanyRepository, DocumentRepository, SettingRepository
 from services import LogicService
@@ -54,9 +54,19 @@ class PaymentBot:
             log_repo=self.log_repo
         )
 
+        # Хендлеры администратора
+        self.admin_handlers = AdminHandlers(
+            user_repo=self.user_repo,
+            company_repo=self.company_repo,
+            bank_repo=self.bank_repo,
+            application_repo=self.application_repo,
+            log_repo=self.log_repo
+        )
+
         # Регистрация роутеров
         self.dp.include_router(self.client_handlers.router)
         self.dp.include_router(self.manager_handlers.router)
+        self.dp.include_router(self.admin_handlers.router)
 
 
     async def start(self):
