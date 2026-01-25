@@ -1,0 +1,23 @@
+# Core
+aiogram==3.4.1
+aiohttp==3.9.1
+python-dotenv==1.0.0
+
+# Database
+asyncpg==0.29.0
+SQLAlchemy==2.0.25
+alembic==1.13.1
+
+# Documents
+python-docx==1.1.0
+python-docx-template==0.16.7
+pypandoc==1.12
+
+# Utils
+pydantic==2.5.3
+loguru==0.7.2
+aiofiles==23.2.1
+
+# Testing (опционально)
+pytest==7.4.4
+pytest-asyncio==0.23.3
