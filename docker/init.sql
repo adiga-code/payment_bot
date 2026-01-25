@@ -78,7 +78,8 @@ CREATE TABLE applications (
     -- Связи
     company_id INT REFERENCES companies(id),
     bank_id INT REFERENCES banks(id),
-    
+    manager_id INT REFERENCES users(id),
+
     -- Статус
     status VARCHAR(50) DEFAULT 'new',
     
@@ -166,6 +167,7 @@ CREATE INDEX idx_applications_status ON applications(status);
 CREATE INDEX idx_applications_primary_check ON applications(primary_check_status);
 CREATE INDEX idx_applications_created_at ON applications(created_at DESC);
 CREATE INDEX idx_applications_external_id ON applications(external_id);
+CREATE INDEX idx_applications_manager_id ON applications(manager_id);
 
 CREATE INDEX idx_approvals_app ON approvals(application_id);
 CREATE INDEX idx_approvals_decision ON approvals(decision);
