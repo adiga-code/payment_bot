@@ -34,6 +34,7 @@ class LogicService:
         ])
         
         # 3. Логировать
+        from bot.database.repositories import LogRepository
         log_repo = LogRepository(self.db_manager)
         await log_repo.create_log(
             action='application_created',
