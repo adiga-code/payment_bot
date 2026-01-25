@@ -38,7 +38,10 @@ class PaymentBot:
         )
 
     async def _setup_handlers(self):
-        self.client_handlers = ClientHandlers(self.bot_logic)
+        self.client_handlers = ClientHandlers(
+            logic_service=self.bot_logic,
+            user_repo=self.user_repo
+        )
 
         self.dp.include_router(self.client_handlers.router)
 
