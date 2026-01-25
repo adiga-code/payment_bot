@@ -334,19 +334,8 @@ class AdminHandlers:
             await callback.answer()
             return
 
-        user_id = int(parts[-1])
-
-        # Изменение роли
-        if action == "role":
-            await callback.message.edit_text(
-                "🔄 <b>Изменение роли</b>\n\nВыберите новую роль:",
-                reply_markup=self.kb.select_role(user_id),
-                parse_mode="HTML"
-            )
-            await callback.answer()
-
-        # Установка роли
-        elif action == "setrole":
+        # Установка роли (обрабатываем отдельно, т.к. user_id не последний)
+        if action == "setrole":
             new_role = parts[-1]
             user_id = int(parts[-2])
 
@@ -386,6 +375,19 @@ class AdminHandlers:
                     parse_mode="HTML"
                 )
             await callback.answer("Роль обновлена!")
+            return
+
+        # Для остальных действий user_id - последний элемент
+        user_id = int(parts[-1])
+
+        # Изменение роли
+        if action == "role":
+            await callback.message.edit_text(
+                "🔄 <b>Изменение роли</b>\n\nВыберите новую роль:",
+                reply_markup=self.kb.select_role(user_id),
+                parse_mode="HTML"
+            )
+            await callback.answer()
 
         # Деактивация
         elif action == "deactivate":
