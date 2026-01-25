@@ -34,8 +34,7 @@ class LogicService:
         ])
         
         # 3. Логировать
-        log_repo = LogRepository(self.db_manager)
-        await log_repo.create_log(
+        await self.logger_repo.create_log(
             action='application_created',
             application_id=app.id,
             details={'external_id': app.external_id}
