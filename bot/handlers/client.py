@@ -5,20 +5,25 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
 from services import LogicService
+from database import UserRepository
+
 
 class ApplicationForm(StatesGroup):
     waiting_for_amount = State()
     waiting_for_inn = State()
     waiting_for_purpose = State()
 
+
 class ClientHandlers:
     def __init__(
-            self, 
-            logic_service: LogicService
+            self,
+            logic_service: LogicService,
+            user_repo: UserRepository
             ):
         self.router = Router()
-        self._setup_handlers()
         self.logic_service = logic_service
+        self.user_repo = user_repo
+        self._setup_handlers()
 
     def _setup_handlers(self):
         self.router.message(Command("start"))(self.start_command)
@@ -31,6 +36,15 @@ class ClientHandlers:
 
     async def start_application(self, message: Message, state: FSMContext):
         """Начало создания заявки"""
+        # Авторегистрация клиента (если ещё не зарегистрирован)
+        await self.user_repo.get_or_create(
+            telegram_id=message.from_user.id,
+            role='client',
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            last_name=message.from_user.last_name
+        )
+
         await message.answer(
             "📋 Создание заявки\n\n"
             "Введите сумму платежа (в рублях):"
@@ -68,7 +82,8 @@ class ClientHandlers:
         amount = data['amount']
         inn = data['inn']
 
-        await self.logic_service.create_new_application({
+        # Создаём заявку и получаем объект с external_id
+        app = await self.logic_service.create_new_application({
             'amount': amount,
             'inn': inn,
             'purpose': purpose,
@@ -77,12 +92,34 @@ class ClientHandlers:
 
         await message.answer(
             f"✅ Ваша заявка создана!\n\n"
-            f"Сумма: {amount} руб.\n"
-            f"ИНН: {inn}\n"
-            f"Назначение: {purpose}\n\n"
-            f"Спасибо за использование нашего бота!"
+            f"📋 Номер заявки: {app.external_id}\n"
+            f"💰 Сумма: {amount:,} руб.\n"
+            f"🏢 ИНН: {inn}\n"
+            f"📝 Назначение: {purpose}\n\n"
+            f"🔍 Заявка отправлена на проверку.\n"
+            f"Вы получите уведомление о статусе."
         )
         await state.clear()
 
     async def start_command(self, message: Message):
-        await message.answer("Welcome to the Payment Bot! How can I assist you today?")
+        """Команда /start - приветствие и регистрация клиента"""
+        # Авторегистрация клиента
+        user, created = await self.user_repo.get_or_create(
+            telegram_id=message.from_user.id,
+            role='client',
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            last_name=message.from_user.last_name
+        )
+
+        if created:
+            await message.answer(
+                "👋 Добро пожаловать в Payment Bot!\n\n"
+                "Вы успешно зарегистрированы.\n\n"
+                "📋 Для создания заявки используйте команду /zayavka"
+            )
+        else:
+            await message.answer(
+                "👋 С возвращением!\n\n"
+                "📋 Для создания заявки используйте команду /zayavka"
+            )
