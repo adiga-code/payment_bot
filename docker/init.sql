@@ -10,7 +10,7 @@ CREATE TABLE users (
     username VARCHAR(100),
     first_name VARCHAR(100),
     last_name VARCHAR(100),
-    role VARCHAR(20) NOT NULL CHECK (role IN ('manager', 'bank', 'accountant', 'supervisor', 'admin')),
+    role VARCHAR(20) NOT NULL CHECK (role IN ('client', 'manager', 'bank', 'accountant', 'supervisor', 'admin')),
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
