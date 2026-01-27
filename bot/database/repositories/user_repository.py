@@ -81,3 +81,45 @@ class UserRepository(BaseRepository[User]):
     async def update_role(self, user_id: int, new_role: str) -> bool:
         """Обновить роль пользователя"""
         return await self.update_by_id(user_id, role=new_role)
+
+    async def assign_to_bank(self, user_id: int, bank_id: int | None) -> bool:
+        """Привязать сотрудника к банку (или отвязать если bank_id=None)"""
+        return await self.update_by_id(user_id, bank_id=bank_id)
+
+    async def get_bank_employees(self, bank_id: int, active_only: bool = True) -> List[User]:
+        """Получить всех сотрудников конкретного банка"""
+        async with self.session_maker() as session:
+            query = select(User).where(
+                User.bank_id == bank_id,
+                User.role == 'bank'
+            )
+
+            if active_only:
+                query = query.where(User.is_active == True)
+
+            result = await session.execute(query)
+            return list(result.scalars().all())
+
+    async def is_bank_employee(self, telegram_id: int, bank_id: int) -> bool:
+        """Проверить, является ли пользователь сотрудником конкретного банка"""
+        async with self.session_maker() as session:
+            result = await session.execute(
+                select(User).where(
+                    User.telegram_id == telegram_id,
+                    User.bank_id == bank_id,
+                    User.role == 'bank',
+                    User.is_active == True
+                )
+            )
+            return result.scalar_one_or_none() is not None
+
+    async def get_user_with_bank(self, telegram_id: int) -> Optional[User]:
+        """Получить пользователя с загруженным банком"""
+        from sqlalchemy.orm import selectinload
+        async with self.session_maker() as session:
+            result = await session.execute(
+                select(User)
+                .options(selectinload(User.bank))
+                .where(User.telegram_id == telegram_id)
+            )
+            return result.scalar_one_or_none()

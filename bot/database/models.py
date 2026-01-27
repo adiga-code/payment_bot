@@ -27,15 +27,29 @@ class User(Base):
     first_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     role: Mapped[str] = mapped_column(
-        String(20), 
+        String(20),
         nullable=False,
         index=True
     )  # 'manager', 'bank', 'accountant', 'supervisor', 'admin'
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Привязка сотрудника банка к конкретному банку
+    bank_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey('banks.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Связи
+    bank: Mapped["Bank"] = relationship(
+        'Bank',
+        back_populates='employees',
+        foreign_keys=[bank_id]
+    )
     managed_applications: Mapped[list["Application"]] = relationship(
         'Application',
         back_populates='manager',
@@ -118,6 +132,11 @@ class Bank(Base):
         'CompanyBank',
         back_populates='bank'
     )
+    employees: Mapped[list["User"]] = relationship(
+        'User',
+        back_populates='bank',
+        foreign_keys='User.bank_id'
+    )
 
     def __repr__(self):
         return f"<Bank(id={self.id}, name={self.name})>"
@@ -196,6 +215,7 @@ class Application(Base):
     # Чаты
     client_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     client_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bank_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # ID сообщения в чате банка
     
     # Временные метки
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)

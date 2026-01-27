@@ -320,15 +320,33 @@ class AdminHandlers:
                 'admin': '⚙️ Администратор'
             }
 
-            await callback.message.edit_text(
+            text = (
                 f"👤 <b>Пользователь</b>\n\n"
                 f"🆔 ID: <code>{user.telegram_id}</code>\n"
                 f"📛 Username: @{user.username or '—'}\n"
                 f"👤 Имя: {user.first_name or '—'} {user.last_name or ''}\n"
                 f"🎭 Роль: {role_names.get(user.role, user.role)}\n"
                 f"📊 Статус: {'✅ Активен' if user.is_active else '❌ Неактивен'}\n"
-                f"📅 Создан: {user.created_at.strftime('%d.%m.%Y %H:%M')}",
-                reply_markup=self.kb.user_actions(user.id, user.is_active),
+            )
+
+            # Для сотрудников банка показываем привязку
+            if user.role == 'bank':
+                if user.bank_id:
+                    bank = await self.bank_repo.get_by_id(user.bank_id)
+                    text += f"🏦 Банк: <b>{bank.name if bank else '—'}</b>\n"
+                else:
+                    text += f"🏦 Банк: <b>не привязан!</b>\n"
+
+            text += f"📅 Создан: {user.created_at.strftime('%d.%m.%Y %H:%M')}"
+
+            await callback.message.edit_text(
+                text,
+                reply_markup=self.kb.user_actions(
+                    user.id,
+                    user.is_active,
+                    role=user.role,
+                    has_bank=bool(user.bank_id)
+                ),
                 parse_mode="HTML"
             )
             await callback.answer()
@@ -367,14 +385,60 @@ class AdminHandlers:
                 )
             else:
                 await self.user_repo.update_role(user_id, new_role)
+                # При смене роли сбрасываем привязку к банку (если была)
+                if new_role != 'bank':
+                    await self.user_repo.assign_to_bank(user_id, None)
                 user = await self.user_repo.get_by_id(user_id)
 
                 await callback.message.edit_text(
                     f"✅ Роль изменена на <b>{new_role}</b>",
-                    reply_markup=self.kb.user_actions(user_id, user.is_active),
+                    reply_markup=self.kb.user_actions(user_id, user.is_active, role=new_role, has_bank=bool(user.bank_id)),
                     parse_mode="HTML"
                 )
             await callback.answer("Роль обновлена!")
+            return
+
+        # Привязка к банку (assignbank и setbank)
+        if action == "assignbank":
+            user_id = int(parts[-1])
+            banks = await self.bank_repo.get_all()
+            active_banks = [b for b in banks if b.is_active]
+
+            if not active_banks:
+                await callback.answer("Нет активных банков!", show_alert=True)
+                return
+
+            await callback.message.edit_text(
+                "🏦 <b>Привязка к банку</b>\n\n"
+                "Выберите банк для сотрудника:",
+                reply_markup=self.kb.select_bank_for_user(user_id, active_banks),
+                parse_mode="HTML"
+            )
+            await callback.answer()
+            return
+
+        if action == "setbank":
+            user_id = int(parts[-2])
+            bank_id = int(parts[-1])
+
+            if bank_id == 0:
+                # Отвязка от банка
+                await self.user_repo.assign_to_bank(user_id, None)
+                await callback.message.edit_text(
+                    "✅ Сотрудник отвязан от банка",
+                    reply_markup=self.kb.back_to_menu(),
+                    parse_mode="HTML"
+                )
+            else:
+                # Привязка к банку
+                bank = await self.bank_repo.get_by_id(bank_id)
+                await self.user_repo.assign_to_bank(user_id, bank_id)
+                await callback.message.edit_text(
+                    f"✅ Сотрудник привязан к банку <b>{bank.name}</b>",
+                    reply_markup=self.kb.back_to_menu(),
+                    parse_mode="HTML"
+                )
+            await callback.answer("Банк обновлён!")
             return
 
         # Для остальных действий user_id - последний элемент
@@ -392,9 +456,10 @@ class AdminHandlers:
         # Деактивация
         elif action == "deactivate":
             await self.user_repo.deactivate(user_id)
+            user = await self.user_repo.get_by_id(user_id)
             await callback.message.edit_text(
                 "🚫 Пользователь деактивирован",
-                reply_markup=self.kb.user_actions(user_id, False),
+                reply_markup=self.kb.user_actions(user_id, False, role=user.role, has_bank=bool(user.bank_id)),
                 parse_mode="HTML"
             )
             await callback.answer()
@@ -402,9 +467,10 @@ class AdminHandlers:
         # Активация
         elif action == "activate":
             await self.user_repo.activate(user_id)
+            user = await self.user_repo.get_by_id(user_id)
             await callback.message.edit_text(
                 "✅ Пользователь активирован",
-                reply_markup=self.kb.user_actions(user_id, True),
+                reply_markup=self.kb.user_actions(user_id, True, role=user.role, has_bank=bool(user.bank_id)),
                 parse_mode="HTML"
             )
             await callback.answer()

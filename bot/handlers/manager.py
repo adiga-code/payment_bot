@@ -36,7 +36,8 @@ class ManagerHandlers:
             approval_repo: ApprovalRepository,
             company_repo: CompanyRepository,
             bank_repo: BankRepository,
-            log_repo: LogRepository
+            log_repo: LogRepository,
+            notification_service=None
     ):
         self.router = Router()
         self.user_repo = user_repo
@@ -45,6 +46,7 @@ class ManagerHandlers:
         self.company_repo = company_repo
         self.bank_repo = bank_repo
         self.log_repo = log_repo
+        self.notification_service = notification_service
         self.kb = ManagerKeyboards()
 
         self._setup_middleware()
@@ -321,18 +323,34 @@ class ManagerHandlers:
 
         bank = await self.bank_repo.get_by_id(bank_id)
 
-        await callback.message.edit_text(
-            f"✅ <b>Заявка одобрена!</b>\n\n"
-            f"📋 {app.external_id}\n"
-            f"💰 {app.amount:,.0f}₽\n"
-            f"🏦 Отправлена в: {bank.name}\n\n"
-            f"⏳ Ожидаем ответа от банка...",
-            reply_markup=self.kb.main_menu(),
-            parse_mode="HTML"
-        )
-        await callback.answer("Заявка отправлена в банк!")
+        # Отправляем заявку в групповой чат банка
+        sent_to_bank = False
+        if self.notification_service:
+            sent_to_bank = await self.notification_service.send_to_bank_group(app_id)
 
-        # TODO: Отправить уведомление в чат банка
+        if sent_to_bank:
+            await callback.message.edit_text(
+                f"✅ <b>Заявка одобрена!</b>\n\n"
+                f"📋 {app.external_id}\n"
+                f"💰 {app.amount:,.0f}₽\n"
+                f"🏦 Отправлена в: {bank.name}\n\n"
+                f"📤 Заявка отправлена в чат банка\n"
+                f"⏳ Ожидаем ответа...",
+                reply_markup=self.kb.main_menu(),
+                parse_mode="HTML"
+            )
+        else:
+            await callback.message.edit_text(
+                f"⚠️ <b>Заявка одобрена, но не отправлена в банк!</b>\n\n"
+                f"📋 {app.external_id}\n"
+                f"💰 {app.amount:,.0f}₽\n"
+                f"🏦 Банк: {bank.name}\n\n"
+                f"❌ Не удалось отправить в чат банка.\n"
+                f"Проверьте, что бот добавлен в группу банка.",
+                reply_markup=self.kb.main_menu(),
+                parse_mode="HTML"
+            )
+        await callback.answer("Заявка отправлена в банк!")
 
     async def cb_reject(self, callback: CallbackQuery, db_user):
         """Отклонение заявки - выбор причины"""

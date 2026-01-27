@@ -95,13 +95,20 @@ class AdminKeyboards:
         return builder.as_markup()
 
     @staticmethod
-    def user_actions(user_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    def user_actions(user_id: int, is_active: bool, role: str = None, has_bank: bool = False) -> InlineKeyboardMarkup:
         """Действия с пользователем"""
         builder = InlineKeyboardBuilder()
 
         builder.row(
             InlineKeyboardButton(text="🔄 Изменить роль", callback_data=f"admin:user:role:{user_id}")
         )
+
+        # Для сотрудников банка - кнопка привязки к банку
+        if role == 'bank':
+            btn_text = "🏦 Изменить банк" if has_bank else "🏦 Привязать к банку"
+            builder.row(
+                InlineKeyboardButton(text=btn_text, callback_data=f"admin:user:assignbank:{user_id}")
+            )
 
         if is_active:
             builder.row(
@@ -117,6 +124,29 @@ class AdminKeyboards:
         )
         builder.row(
             InlineKeyboardButton(text="🔙 К списку", callback_data="admin:users:list:all")
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def select_bank_for_user(user_id: int, banks: list) -> InlineKeyboardMarkup:
+        """Выбор банка для привязки сотрудника"""
+        builder = InlineKeyboardBuilder()
+
+        for bank in banks:
+            if bank.is_active:
+                builder.row(
+                    InlineKeyboardButton(
+                        text=f"🏦 {bank.name}",
+                        callback_data=f"admin:user:setbank:{user_id}:{bank.id}"
+                    )
+                )
+
+        # Кнопка отвязки от банка
+        builder.row(
+            InlineKeyboardButton(text="❌ Отвязать от банка", callback_data=f"admin:user:setbank:{user_id}:0")
+        )
+        builder.row(
+            InlineKeyboardButton(text="🔙 Отмена", callback_data=f"admin:user:{user_id}")
         )
         return builder.as_markup()
 

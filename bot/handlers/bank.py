@@ -1,9 +1,17 @@
 # bot/handlers/bank.py
+"""
+Хендлер для обработки заявок в групповых чатах банков.
+
+Работает так:
+1. Менеджер одобряет заявку и выбирает банк
+2. Бот отправляет сообщение в групповой чат банка с кнопками
+3. Сотрудники банка (привязанные к этому банку) могут нажимать кнопки
+4. После нажатия кнопки сообщение обновляется (кнопки блокируются)
+"""
 
 from aiogram import Router, F, Bot
-from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
-from datetime import date
+from aiogram.types import CallbackQuery
+from datetime import datetime
 
 from database import (
     ApplicationRepository,
@@ -13,13 +21,10 @@ from database import (
     LogRepository
 )
 from keyboards.bank_kb import BankKeyboards
-from middleware import RoleRequiredMiddleware
 
 
-class BankHandlers:
-    """Хендлеры для сотрудника банка"""
-
-    ALLOWED_ROLES = ['bank', 'supervisor', 'admin']
+class BankGroupHandlers:
+    """Хендлеры для группового чата банка"""
 
     def __init__(
             self,
@@ -39,113 +44,56 @@ class BankHandlers:
         self.bot = bot
         self.kb = BankKeyboards()
 
-        self._setup_middleware()
         self._setup_handlers()
-
-    def _setup_middleware(self):
-        """Middleware для проверки роли"""
-        self.router.message.middleware(
-            RoleRequiredMiddleware(self.ALLOWED_ROLES, self.user_repo)
-        )
-        self.router.callback_query.middleware(
-            RoleRequiredMiddleware(self.ALLOWED_ROLES, self.user_repo)
-        )
 
     def _setup_handlers(self):
         """Регистрация обработчиков"""
-        # Команды
-        self.router.message(Command("bank"))(self.cmd_bank_menu)
+        # Callback handlers для группового чата (без middleware!)
+        self.router.callback_query(F.data.startswith("bankgrp:"))(self.handle_bank_callback)
 
-        # Callback handlers
-        self.router.callback_query(F.data == "bank:menu")(self.cb_menu)
-        self.router.callback_query(F.data == "bank:applications")(self.cb_applications)
-        self.router.callback_query(F.data.startswith("bank:page:"))(self.cb_page)
-        self.router.callback_query(F.data.startswith("bank:app:"))(self.cb_view_application)
-        self.router.callback_query(F.data.startswith("bank:risk:"))(self.cb_risk_assessment)
-        self.router.callback_query(F.data.startswith("bank:reject_confirm:"))(self.cb_reject_confirm)
-        self.router.callback_query(F.data == "bank:stats")(self.cb_stats)
+    async def handle_bank_callback(self, callback: CallbackQuery):
+        """Обработка всех callback из группового чата банка"""
+        # Разбираем callback data
+        parts = callback.data.split(":")
+        action = parts[1] if len(parts) > 1 else None
 
-    # ==================== КОМАНДЫ ====================
-
-    async def cmd_bank_menu(self, message: Message, db_user):
-        """Команда /bank - главное меню"""
-        # Получаем заявки для этого банка
-        pending_count = await self._get_pending_count(db_user)
-
-        await message.answer(
-            f"🏦 <b>Панель банка</b>\n\n"
-            f"👤 {db_user.first_name or db_user.username}\n"
-            f"📥 Входящих заявок: <b>{pending_count}</b>",
-            reply_markup=self.kb.main_menu(),
-            parse_mode="HTML"
-        )
-
-    # ==================== CALLBACK HANDLERS ====================
-
-    async def cb_menu(self, callback: CallbackQuery, db_user):
-        """Возврат в главное меню"""
-        pending_count = await self._get_pending_count(db_user)
-
-        await callback.message.edit_text(
-            f"🏦 <b>Панель банка</b>\n\n"
-            f"👤 {db_user.first_name or db_user.username}\n"
-            f"📥 Входящих заявок: <b>{pending_count}</b>",
-            reply_markup=self.kb.main_menu(),
-            parse_mode="HTML"
-        )
-        await callback.answer()
-
-    async def cb_applications(self, callback: CallbackQuery, db_user):
-        """Список входящих заявок"""
-        applications = await self._get_bank_applications(db_user)
-
-        if not applications:
-            await callback.message.edit_text(
-                "📥 <b>Входящие заявки</b>\n\n"
-                "Нет заявок на рассмотрение.",
-                reply_markup=self.kb.back_to_menu(),
-                parse_mode="HTML"
-            )
-        else:
-            await callback.message.edit_text(
-                f"📥 <b>Входящие заявки</b> ({len(applications)})\n\n"
-                "Выберите заявку для оценки риска:",
-                reply_markup=self.kb.applications_list(applications),
-                parse_mode="HTML"
-            )
-        await callback.answer()
-
-    async def cb_page(self, callback: CallbackQuery, db_user):
-        """Пагинация"""
-        page = int(callback.data.split(":")[-1])
-        applications = await self._get_bank_applications(db_user)
-
-        await callback.message.edit_reply_markup(
-            reply_markup=self.kb.applications_list(applications, page)
-        )
-        await callback.answer()
-
-    async def cb_view_application(self, callback: CallbackQuery, db_user):
-        """Просмотр заявки"""
-        app_id = int(callback.data.split(":")[-1])
-        app = await self.application_repo.get_with_relations(app_id)
-
-        if not app:
-            await callback.answer("Заявка не найдена", show_alert=True)
+        # Пустое действие (заглушка)
+        if action == "noop":
+            await callback.answer("Заявка уже обработана", show_alert=False)
             return
 
-        text = self._format_application(app)
+        # Получаем банк по chat_id
+        chat_id = callback.message.chat.id
+        bank = await self.bank_repo.get_by_chat_id(chat_id)
 
-        await callback.message.edit_text(
-            text,
-            reply_markup=self.kb.risk_assessment(app_id),
-            parse_mode="HTML"
-        )
-        await callback.answer()
+        if not bank:
+            await callback.answer("Этот чат не привязан к банку", show_alert=True)
+            return
 
-    async def cb_risk_assessment(self, callback: CallbackQuery, db_user):
+        # Проверяем что пользователь - сотрудник этого банка
+        telegram_id = callback.from_user.id
+        is_employee = await self.user_repo.is_bank_employee(telegram_id, bank.id)
+
+        if not is_employee:
+            await callback.answer(
+                "У вас нет прав для обработки заявок этого банка",
+                show_alert=True
+            )
+            return
+
+        # Получаем пользователя
+        db_user = await self.user_repo.get_by_telegram_id(telegram_id)
+
+        # Обрабатываем действия
+        if action == "risk":
+            await self._handle_risk_assessment(callback, parts, db_user, bank)
+        elif action == "reject_confirm":
+            await self._handle_reject_confirm(callback, parts, db_user, bank)
+        elif action == "back":
+            await self._handle_back(callback, parts)
+
+    async def _handle_risk_assessment(self, callback: CallbackQuery, parts: list, db_user, bank):
         """Оценка риска"""
-        parts = callback.data.split(":")
         app_id = int(parts[2])
         risk_level = parts[3]
 
@@ -154,12 +102,18 @@ class BankHandlers:
             await callback.answer("Заявка не найдена", show_alert=True)
             return
 
+        # Проверяем что заявка ещё на этапе bank_review
+        if app.status != 'bank_review':
+            await callback.answer("Заявка уже обработана", show_alert=True)
+            return
+
+        # Высокий риск - показываем подтверждение
         if risk_level == "high_risk":
-            # Подтверждение отклонения
             await callback.message.edit_text(
                 f"❌ <b>Высокий риск</b>\n\n"
-                f"📋 {app.external_id}\n"
-                f"💰 {app.amount:,.0f}₽\n\n"
+                f"📋 Заявка: {app.external_id}\n"
+                f"💰 Сумма: {app.amount:,.0f}₽\n"
+                f"🏢 ИНН: {app.payer_inn}\n\n"
                 f"Заявка будет <b>отклонена</b>.\n"
                 f"Подтвердите действие:",
                 reply_markup=self.kb.confirm_high_risk(app_id),
@@ -179,53 +133,54 @@ class BankHandlers:
             action='bank_approved',
             application_id=app_id,
             user_id=db_user.id,
-            details={'risk_level': risk_level}
+            details={'risk_level': risk_level, 'bank_id': bank.id}
         )
 
+        # Обновляем время ответа банка
+        await self.application_repo.update_by_id(app_id, bank_response_at=datetime.utcnow())
+
         if risk_level == "min_risk":
-            # Минимальный риск - создаём эскалацию к руководителю
+            # Минимальный риск - эскалация к руководителю
             await self.approval_repo.create_escalation(
                 app_id=app_id,
                 role='supervisor',
                 reason='Минимальный риск - требуется решение руководителя',
                 sequence=0
             )
-            await self.application_repo.update_status(app_id, 'supervisor_review')
 
-            await callback.message.edit_text(
-                f"⚠️ <b>Минимальный риск</b>\n\n"
-                f"📋 {app.external_id}\n"
-                f"💰 {app.amount:,.0f}₽\n\n"
-                f"📤 Заявка отправлена руководителю на решение.",
-                reply_markup=self.kb.back_to_menu(),
-                parse_mode="HTML"
-            )
-            await callback.answer("Отправлено руководителю")
+        # Отправляем к руководителю
+        await self.application_repo.update_status(app_id, 'supervisor_review')
 
-            # TODO: Уведомить руководителя
-        else:
-            # Без риска - отправляем к руководителю на финальное одобрение
-            await self.application_repo.update_status(app_id, 'supervisor_review')
+        # Обновляем сообщение в чате банка
+        user_name = db_user.first_name or db_user.username or str(db_user.telegram_id)
+        status_text = "✅ Без риска" if risk_level == "no_risk" else "⚠️ Минимальный риск"
 
-            await callback.message.edit_text(
-                f"✅ <b>Без риска</b>\n\n"
-                f"📋 {app.external_id}\n"
-                f"💰 {app.amount:,.0f}₽\n\n"
-                f"📤 Заявка отправлена руководителю на финальное одобрение.",
-                reply_markup=self.kb.back_to_menu(),
-                parse_mode="HTML"
-            )
-            await callback.answer("Отправлено руководителю")
+        await callback.message.edit_text(
+            f"📋 <b>Заявка {app.external_id}</b>\n\n"
+            f"💰 Сумма: {app.amount:,.0f}₽\n"
+            f"🏢 ИНН плательщика: {app.payer_inn}\n"
+            f"📝 Назначение: {app.purpose}\n\n"
+            f"<b>{status_text}</b>\n"
+            f"👤 Обработал: {user_name}\n"
+            f"📤 Отправлено руководителю",
+            reply_markup=self.kb.processed(risk_level, user_name),
+            parse_mode="HTML"
+        )
+        await callback.answer(f"Заявка отправлена руководителю ({status_text})")
 
-            # TODO: Уведомить руководителя
+        # TODO: Уведомить руководителя
 
-    async def cb_reject_confirm(self, callback: CallbackQuery, db_user):
+    async def _handle_reject_confirm(self, callback: CallbackQuery, parts: list, db_user, bank):
         """Подтверждение отклонения (высокий риск)"""
-        app_id = int(callback.data.split(":")[-1])
+        app_id = int(parts[2])
         app = await self.application_repo.get_by_id(app_id)
 
         if not app:
             await callback.answer("Заявка не найдена", show_alert=True)
+            return
+
+        if app.status != 'bank_review':
+            await callback.answer("Заявка уже обработана", show_alert=True)
             return
 
         # Отклоняем этап банка
@@ -235,74 +190,59 @@ class BankHandlers:
 
         # Обновляем статус заявки
         await self.application_repo.update_status(app_id, 'rejected')
+        await self.application_repo.update_by_id(app_id, bank_response_at=datetime.utcnow())
 
         # Логируем
         await self.log_repo.create_log(
             action='bank_rejected',
             application_id=app_id,
             user_id=db_user.id,
-            details={'reason': 'high_risk'}
+            details={'reason': 'high_risk', 'bank_id': bank.id}
         )
 
+        # Обновляем сообщение
+        user_name = db_user.first_name or db_user.username or str(db_user.telegram_id)
+
         await callback.message.edit_text(
-            f"❌ <b>Заявка отклонена</b>\n\n"
-            f"📋 {app.external_id}\n"
-            f"💰 {app.amount:,.0f}₽\n\n"
-            f"📝 Причина: Высокий риск",
-            reply_markup=self.kb.back_to_menu(),
+            f"📋 <b>Заявка {app.external_id}</b>\n\n"
+            f"💰 Сумма: {app.amount:,.0f}₽\n"
+            f"🏢 ИНН плательщика: {app.payer_inn}\n\n"
+            f"<b>❌ ОТКЛОНЕНО</b>\n"
+            f"📝 Причина: Высокий риск\n"
+            f"👤 Отклонил: {user_name}",
+            reply_markup=self.kb.processed("high_risk", user_name),
             parse_mode="HTML"
         )
         await callback.answer("Заявка отклонена")
 
         # TODO: Уведомить клиента и менеджера
 
-    async def cb_stats(self, callback: CallbackQuery, db_user):
-        """Статистика банка"""
-        today = date.today()
+    async def _handle_back(self, callback: CallbackQuery, parts: list):
+        """Возврат к оценке риска"""
+        app_id = int(parts[2])
+        app = await self.application_repo.get_with_relations(app_id)
 
-        # Получаем все заявки банка за сегодня
-        all_apps = await self._get_bank_applications(db_user, include_processed=True)
+        if not app:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
 
-        pending = len([a for a in all_apps if a.status == 'bank_review'])
-        approved = len([a for a in all_apps if a.status in ['supervisor_review', 'approved', 'invoice_generated', 'paid']])
-        rejected = len([a for a in all_apps if a.status == 'rejected'])
+        if app.status != 'bank_review':
+            await callback.answer("Заявка уже обработана", show_alert=True)
+            return
 
-        total_amount = sum(a.amount for a in all_apps)
-
+        # Возвращаем исходное сообщение с кнопками
+        text = self._format_application(app)
         await callback.message.edit_text(
-            f"📊 <b>Статистика за {today.strftime('%d.%m.%Y')}</b>\n\n"
-            f"📥 На рассмотрении: {pending}\n"
-            f"✅ Одобрено: {approved}\n"
-            f"❌ Отклонено: {rejected}\n\n"
-            f"💰 Общая сумма: {total_amount:,.0f}₽",
-            reply_markup=self.kb.back_to_menu(),
+            text,
+            reply_markup=self.kb.risk_assessment(app_id),
             parse_mode="HTML"
         )
         await callback.answer()
 
-    # ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
-
-    async def _get_pending_count(self, db_user) -> int:
-        """Количество заявок на рассмотрении"""
-        applications = await self._get_bank_applications(db_user)
-        return len(applications)
-
-    async def _get_bank_applications(self, db_user, include_processed: bool = False):
-        """Получить заявки для банка"""
-        # Получаем все заявки в статусе bank_review
-        if include_processed:
-            # Все заявки, которые прошли через банк
-            all_apps = await self.application_repo.get_by_status('bank_review')
-            supervisor_apps = await self.application_repo.get_by_status('supervisor_review')
-            approved_apps = await self.application_repo.get_by_status('approved')
-            rejected_apps = await self.application_repo.get_by_status('rejected')
-            return all_apps + supervisor_apps + approved_apps + rejected_apps
-        else:
-            return await self.application_repo.get_by_status('bank_review')
-
     def _format_application(self, app) -> str:
-        """Форматирование заявки"""
-        text = f"📋 <b>Заявка {app.external_id}</b>\n\n"
+        """Форматирование заявки для сообщения в группе"""
+        text = f"🏦 <b>Новая заявка на проверку</b>\n\n"
+        text += f"📋 Номер: <b>{app.external_id}</b>\n"
         text += f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
         text += f"🏢 ИНН плательщика: <code>{app.payer_inn}</code>\n"
 
@@ -314,18 +254,13 @@ class BankHandlers:
 
         if app.company:
             text += f"\n🏢 <b>Компания:</b> {app.company.name}\n"
-            text += f"   ИНН: {app.company.inn}\n"
 
         if app.manager:
-            text += f"\n👔 <b>Менеджер:</b> {app.manager.first_name or app.manager.username}\n"
-
-        # История подписей
-        if app.approvals:
-            text += "\n<b>История:</b>\n"
-            for approval in sorted(app.approvals, key=lambda x: x.sequence):
-                if approval.decision:
-                    emoji = {'approved': '✅', 'rejected': '❌', 'escalated': '🚨'}.get(approval.decision, '⏳')
-                    text += f"  {emoji} {approval.role}: {approval.decision}\n"
+            text += f"👔 <b>Менеджер:</b> {app.manager.first_name or app.manager.username}\n"
 
         text += "\n<b>Оцените уровень риска:</b>"
         return text
+
+
+# Для обратной совместимости
+BankHandlers = BankGroupHandlers

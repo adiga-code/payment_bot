@@ -12,6 +12,7 @@ CREATE TABLE users (
     last_name VARCHAR(100),
     role VARCHAR(20) NOT NULL CHECK (role IN ('client', 'manager', 'bank', 'accountant', 'supervisor', 'admin')),
     is_active BOOLEAN DEFAULT TRUE,
+    bank_id INT,  -- Привязка сотрудника банка к конкретному банку
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -92,6 +93,7 @@ CREATE TABLE applications (
     -- Чаты
     client_chat_id BIGINT NOT NULL,
     client_message_id INT,
+    bank_message_id INT,  -- ID сообщения в чате банка
     
     -- Временные метки
     created_at TIMESTAMP DEFAULT NOW(),
@@ -162,7 +164,11 @@ CREATE TABLE settings (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Внешний ключ для привязки сотрудника к банку
+ALTER TABLE users ADD CONSTRAINT fk_users_bank_id FOREIGN KEY (bank_id) REFERENCES banks(id) ON DELETE SET NULL;
+
 -- Индексы
+CREATE INDEX idx_users_bank_id ON users(bank_id);
 CREATE INDEX idx_applications_status ON applications(status);
 CREATE INDEX idx_applications_primary_check ON applications(primary_check_status);
 CREATE INDEX idx_applications_created_at ON applications(created_at DESC);

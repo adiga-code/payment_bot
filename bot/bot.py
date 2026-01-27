@@ -5,6 +5,7 @@ from handlers import ClientHandlers, ManagerHandlers, AdminHandlers, BankHandler
 from database import DatabaseManager
 from database import ApplicationRepository, UserRepository, LogRepository, ApprovalRepository, BankRepository, CompanyRepository, DocumentRepository, SettingRepository
 from services import LogicService
+from services.notification import NotificationService
 logging.basicConfig(level=logging.INFO)
 
 class PaymentBot:
@@ -37,6 +38,13 @@ class PaymentBot:
             logger_repo=self.log_repo
         )
 
+        # Сервис уведомлений (для отправки заявок в групповые чаты)
+        self.notification_service = NotificationService(
+            bot=self.Bot,
+            application_repo=self.application_repo,
+            bank_repo=self.bank_repo
+        )
+
     async def _setup_handlers(self):
         # Клиентские хендлеры
         self.client_handlers = ClientHandlers(
@@ -51,7 +59,8 @@ class PaymentBot:
             approval_repo=self.approval_repo,
             company_repo=self.company_repo,
             bank_repo=self.bank_repo,
-            log_repo=self.log_repo
+            log_repo=self.log_repo,
+            notification_service=self.notification_service
         )
 
         # Хендлеры администратора
