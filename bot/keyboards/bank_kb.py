@@ -98,6 +98,30 @@ class BankKeyboards:
         return builder.as_markup()
 
     @staticmethod
+    def group_risk_assessment(app_id: int) -> InlineKeyboardMarkup:
+        """Оценка риска — клавиатура для группового чата банка"""
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(
+                text="✅ Без риска",
+                callback_data=f"bank:risk:{app_id}:no_risk"
+            )
+        )
+        builder.row(
+            InlineKeyboardButton(
+                text="⚠️ Минимальный риск",
+                callback_data=f"bank:risk:{app_id}:min_risk"
+            )
+        )
+        builder.row(
+            InlineKeyboardButton(
+                text="❌ Высокий риск",
+                callback_data=f"bank:risk:{app_id}:high_risk"
+            )
+        )
+        return builder.as_markup()
+
+    @staticmethod
     def back_to_menu() -> InlineKeyboardMarkup:
         """Кнопка возврата в меню"""
         builder = InlineKeyboardBuilder()

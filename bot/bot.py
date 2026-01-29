@@ -51,7 +51,8 @@ class PaymentBot:
             approval_repo=self.approval_repo,
             company_repo=self.company_repo,
             bank_repo=self.bank_repo,
-            log_repo=self.log_repo
+            log_repo=self.log_repo,
+            bot=self.Bot
         )
 
         # Хендлеры администратора
