@@ -1,6 +1,6 @@
 # bot/handlers/manager.py
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.state import State, StatesGroup
@@ -16,6 +16,7 @@ from database import (
     LogRepository
 )
 from keyboards import ManagerKeyboards
+from keyboards.bank_kb import BankKeyboards
 from middleware import RoleRequiredMiddleware
 
 
@@ -36,7 +37,8 @@ class ManagerHandlers:
             approval_repo: ApprovalRepository,
             company_repo: CompanyRepository,
             bank_repo: BankRepository,
-            log_repo: LogRepository
+            log_repo: LogRepository,
+            bot: Bot
     ):
         self.router = Router()
         self.user_repo = user_repo
@@ -45,7 +47,9 @@ class ManagerHandlers:
         self.company_repo = company_repo
         self.bank_repo = bank_repo
         self.log_repo = log_repo
+        self.bot = bot
         self.kb = ManagerKeyboards()
+        self.bank_kb = BankKeyboards()
 
         self._setup_middleware()
         self._setup_handlers()
@@ -332,7 +336,32 @@ class ManagerHandlers:
         )
         await callback.answer("Заявка отправлена в банк!")
 
-        # TODO: Отправить уведомление в чат банка
+        # Отправляем уведомление в групповой чат банка
+        if bank and bank.chat_id:
+            notification_text = (
+                f"📥 <b>Новая заявка на оценку риска</b>\n\n"
+                f"📋 {app.external_id}\n"
+                f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
+                f"🏢 ИНН плательщика: <code>{app.payer_inn}</code>\n"
+            )
+            if app.payer_name:
+                notification_text += f"📛 Плательщик: {app.payer_name}\n"
+            notification_text += f"📝 Назначение: {app.purpose}\n"
+            if app.company:
+                notification_text += f"🏢 Компания: {app.company.name}\n"
+            notification_text += (
+                f"\n👔 Менеджер: {db_user.first_name or db_user.username}\n"
+                f"\n<b>Оцените уровень риска:</b>"
+            )
+            try:
+                await self.bot.send_message(
+                    chat_id=bank.chat_id,
+                    text=notification_text,
+                    reply_markup=self.bank_kb.group_risk_assessment(app_id),
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass  # Банковский чат может быть недоступен
 
     async def cb_reject(self, callback: CallbackQuery, db_user):
         """Отклонение заявки - выбор причины"""

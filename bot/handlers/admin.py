@@ -813,9 +813,14 @@ class AdminHandlers:
         # 2. Проверяем forward_origin (новый API Telegram)
         elif hasattr(message, 'forward_origin') and message.forward_origin:
             origin = message.forward_origin
-            if hasattr(origin, 'chat'):
+            # MessageOriginChannel — атрибут 'chat'
+            if hasattr(origin, 'chat') and origin.chat:
                 chat_id = origin.chat.id
                 chat_title = getattr(origin.chat, 'title', None)
+            # MessageOriginChat (группы/супергруппы) — атрибут 'sender_chat'
+            elif hasattr(origin, 'sender_chat') and origin.sender_chat:
+                chat_id = origin.sender_chat.id
+                chat_title = getattr(origin.sender_chat, 'title', None)
 
         # 3. Если отправили число напрямую (Chat ID)
         elif message.text:
