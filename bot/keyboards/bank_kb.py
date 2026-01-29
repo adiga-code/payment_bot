@@ -32,16 +32,36 @@ class BankKeyboards:
         return builder.as_markup()
 
     @staticmethod
-    def confirm_high_risk(app_id: int) -> InlineKeyboardMarkup:
-        """Подтверждение высокого риска (отклонение)"""
+    def rejection_reasons(app_id: int) -> InlineKeyboardMarkup:
+        """Выбор причины отклонения"""
         builder = InlineKeyboardBuilder()
         builder.row(
             InlineKeyboardButton(
-                text="✅ Да, отклонить",
-                callback_data=f"bank:reject_confirm:{app_id}"
-            ),
+                text="⛔ Высокий риск операции",
+                callback_data=f"bank:reject:{app_id}:high_risk_op"
+            )
+        )
+        builder.row(
             InlineKeyboardButton(
-                text="❌ Отмена",
+                text="🚫 Подозрительный контрагент",
+                callback_data=f"bank:reject:{app_id}:suspicious"
+            )
+        )
+        builder.row(
+            InlineKeyboardButton(
+                text="📋 Контрагент в чёрном списке",
+                callback_data=f"bank:reject:{app_id}:blacklist"
+            )
+        )
+        builder.row(
+            InlineKeyboardButton(
+                text="📄 Несоответствие документов",
+                callback_data=f"bank:reject:{app_id}:docs_mismatch"
+            )
+        )
+        builder.row(
+            InlineKeyboardButton(
+                text="🔙 Отмена",
                 callback_data=f"bank:cancel_reject:{app_id}"
             )
         )
