@@ -14,6 +14,14 @@ from keyboards.bank_kb import BankKeyboards
 from middleware import RoleRequiredMiddleware
 
 
+REJECTION_REASONS = {
+    'high_risk_op': 'Высокий риск операции',
+    'suspicious': 'Подозрительный контрагент',
+    'blacklist': 'Контрагент в чёрном списке',
+    'docs_mismatch': 'Несоответствие документов',
+}
+
+
 class BankHandlers:
     """Хендлеры для сотрудника банка (работа через групповой чат)"""
 
@@ -49,7 +57,7 @@ class BankHandlers:
     def _setup_handlers(self):
         """Регистрация обработчиков"""
         self.router.callback_query(F.data.startswith("bank:risk:"))(self.cb_risk_assessment)
-        self.router.callback_query(F.data.startswith("bank:reject_confirm:"))(self.cb_reject_confirm)
+        self.router.callback_query(F.data.startswith("bank:reject:"))(self.cb_reject_reason)
         self.router.callback_query(F.data.startswith("bank:cancel_reject:"))(self.cb_cancel_reject)
 
     # ==================== CALLBACK HANDLERS ====================
@@ -66,14 +74,13 @@ class BankHandlers:
             return
 
         if risk_level == "high_risk":
-            # Подтверждение отклонения
+            # Показываем выбор причины отклонения
             await callback.message.edit_text(
-                f"❌ <b>Высокий риск</b>\n\n"
+                f"❌ <b>Отклонение заявки</b>\n\n"
                 f"📋 {app.external_id}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
-                f"Заявка будет <b>отклонена</b>.\n"
-                f"Подтвердите действие:",
-                reply_markup=self.kb.confirm_high_risk(app_id),
+                f"Выберите причину отклонения:",
+                reply_markup=self.kb.rejection_reasons(app_id),
                 parse_mode="HTML"
             )
             await callback.answer()
@@ -132,19 +139,23 @@ class BankHandlers:
 
             # TODO: Уведомить руководителя
 
-    async def cb_reject_confirm(self, callback: CallbackQuery, db_user):
-        """Подтверждение отклонения (высокий риск)"""
-        app_id = int(callback.data.split(":")[-1])
-        app = await self.application_repo.get_by_id(app_id)
+    async def cb_reject_reason(self, callback: CallbackQuery, db_user):
+        """Отклонение заявки с выбранной причиной"""
+        parts = callback.data.split(":")
+        app_id = int(parts[2])
+        reason_code = parts[3]
 
+        app = await self.application_repo.get_by_id(app_id)
         if not app:
             await callback.answer("Заявка не найдена", show_alert=True)
             return
 
+        reason = REJECTION_REASONS.get(reason_code, reason_code)
+
         # Отклоняем этап банка
         pending_approval = await self.approval_repo.get_by_role(app_id, 'bank')
         if pending_approval:
-            await self.approval_repo.reject(pending_approval.id, db_user.id, "Высокий риск")
+            await self.approval_repo.reject(pending_approval.id, db_user.id, reason)
 
         # Обновляем статус заявки
         await self.application_repo.update_status(app_id, 'rejected')
@@ -154,7 +165,7 @@ class BankHandlers:
             action='bank_rejected',
             application_id=app_id,
             user_id=db_user.id,
-            details={'reason': 'high_risk'}
+            details={'reason': reason_code}
         )
 
         employee_name = db_user.first_name or db_user.username
@@ -164,7 +175,7 @@ class BankHandlers:
             f"📋 {app.external_id}\n"
             f"💰 {app.amount:,.0f}₽\n\n"
             f"👤 Отклонил: {employee_name}\n"
-            f"📝 Причина: Высокий риск",
+            f"📝 Причина: {reason}",
             parse_mode="HTML"
         )
         await callback.answer("Заявка отклонена")
