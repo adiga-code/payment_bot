@@ -81,3 +81,19 @@ class UserRepository(BaseRepository[User]):
     async def update_role(self, user_id: int, new_role: str) -> bool:
         """Обновить роль пользователя"""
         return await self.update_by_id(user_id, role=new_role)
+
+    async def update_bank(self, user_id: int, bank_id: int | None) -> bool:
+        """Привязать/отвязать пользователя от банка"""
+        return await self.update_by_id(user_id, bank_id=bank_id)
+
+    async def get_by_bank_id(self, bank_id: int) -> List[User]:
+        """Получить всех сотрудников банка"""
+        async with self.session_maker() as session:
+            result = await session.execute(
+                select(User).where(
+                    User.bank_id == bank_id,
+                    User.role == 'bank',
+                    User.is_active == True
+                )
+            )
+            return list(result.scalars().all())

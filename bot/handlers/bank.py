@@ -60,10 +60,33 @@ class BankHandlers:
         self.router.callback_query(F.data.startswith("bank:reject:"))(self.cb_reject_reason)
         self.router.callback_query(F.data.startswith("bank:cancel_reject:"))(self.cb_cancel_reject)
 
+    # ==================== HELPERS ====================
+
+    async def _validate_bank_access(self, callback: CallbackQuery, db_user) -> bool:
+        """Проверяет, что сотрудник банка имеет доступ к группе.
+        Supervisor и admin пропускаются без проверки.
+        Возвращает True если доступ разрешён."""
+        if db_user.role in ('supervisor', 'admin'):
+            return True
+
+        bank = await self.bank_repo.get_by_chat_id(callback.message.chat.id)
+        if not bank:
+            await callback.answer("Банк для этой группы не найден", show_alert=True)
+            return False
+
+        if db_user.bank_id != bank.id:
+            await callback.answer("У вас нет доступа к заявкам этого банка", show_alert=True)
+            return False
+
+        return True
+
     # ==================== CALLBACK HANDLERS ====================
 
     async def cb_risk_assessment(self, callback: CallbackQuery, db_user):
         """Оценка риска"""
+        if not await self._validate_bank_access(callback, db_user):
+            return
+
         parts = callback.data.split(":")
         app_id = int(parts[2])
         risk_level = parts[3]
@@ -141,6 +164,9 @@ class BankHandlers:
 
     async def cb_reject_reason(self, callback: CallbackQuery, db_user):
         """Отклонение заявки с выбранной причиной"""
+        if not await self._validate_bank_access(callback, db_user):
+            return
+
         parts = callback.data.split(":")
         app_id = int(parts[2])
         reason_code = parts[3]
@@ -184,6 +210,9 @@ class BankHandlers:
 
     async def cb_cancel_reject(self, callback: CallbackQuery, db_user):
         """Отмена отклонения — возврат к кнопкам оценки риска"""
+        if not await self._validate_bank_access(callback, db_user):
+            return
+
         app_id = int(callback.data.split(":")[-1])
         app = await self.application_repo.get_with_relations(app_id)
 
