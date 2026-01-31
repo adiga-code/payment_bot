@@ -95,7 +95,7 @@ class AdminHandlers:
         self.router.callback_query(F.data.startswith("admin:users:list:"))(self.cb_users_list)
         self.router.callback_query(F.data.startswith("admin:users:page:"))(self.cb_users_page)
         self.router.callback_query(F.data == "admin:users:add")(self.cb_users_add)
-        self.router.callback_query(F.data.startswith("admin:user:") & ~F.data.contains("confirm"))(self.cb_user_action)
+        self.router.callback_query(F.data.startswith("admin:user:"))(self.cb_user_action)
 
         # FSM: добавление пользователя
         self.router.message(AdminStates.waiting_user_forward)(self.process_user_forward)
@@ -105,7 +105,7 @@ class AdminHandlers:
         self.router.callback_query(F.data == "admin:companies:list")(self.cb_companies_list)
         self.router.callback_query(F.data.startswith("admin:companies:page:"))(self.cb_companies_page)
         self.router.callback_query(F.data == "admin:companies:add")(self.cb_companies_add)
-        self.router.callback_query(F.data.startswith("admin:company:") & ~F.data.contains("confirm"))(self.cb_company_action)
+        self.router.callback_query(F.data.startswith("admin:company:"))(self.cb_company_action)
 
         # FSM: компании
         self.router.message(AdminStates.waiting_company_name)(self.process_company_name)
@@ -121,7 +121,7 @@ class AdminHandlers:
         self.router.callback_query(F.data == "admin:banks:list")(self.cb_banks_list)
         self.router.callback_query(F.data.startswith("admin:banks:page:"))(self.cb_banks_page)
         self.router.callback_query(F.data == "admin:banks:add")(self.cb_banks_add)
-        self.router.callback_query(F.data.startswith("admin:bank:") & ~F.data.contains("confirm"))(self.cb_bank_action)
+        self.router.callback_query(F.data.startswith("admin:bank:"))(self.cb_bank_action)
 
         # FSM: банки
         self.router.message(AdminStates.waiting_bank_name)(self.process_bank_name)
