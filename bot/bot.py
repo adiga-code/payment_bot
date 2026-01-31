@@ -10,7 +10,7 @@ from aiogram.filters import ChatMemberUpdatedFilter, IS_NOT_MEMBER, MEMBER, ADMI
 from handlers import ClientHandlers, ManagerHandlers, AdminHandlers, BankHandlers, SupervisorHandlers
 from database import DatabaseManager
 from database import ApplicationRepository, UserRepository, LogRepository, ApprovalRepository, BankRepository, CompanyRepository, DocumentRepository, SettingRepository
-from services import LogicService
+from services import LogicService, ZCBService
 logging.basicConfig(level=logging.INFO)
 
 
@@ -50,6 +50,7 @@ class PaymentBot:
             approval_repo=self.approval_repo,
             logger_repo=self.log_repo
         )
+        self.zcb_service = ZCBService(api_key=self.config.ZCB_API_KEY)
 
     async def _setup_handlers(self):
         # Обработчик добавления бота в группу (на уровне dispatcher, без middleware)
@@ -83,7 +84,8 @@ class PaymentBot:
             bank_repo=self.bank_repo,
             application_repo=self.application_repo,
             log_repo=self.log_repo,
-            pending_group_codes=self.pending_group_codes
+            pending_group_codes=self.pending_group_codes,
+            zcb_service=self.zcb_service
         )
 
         # Хендлеры банка

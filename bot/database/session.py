@@ -34,3 +34,29 @@ class DatabaseManager:
             await conn.execute(text(
                 "ALTER TABLE banks ALTER COLUMN chat_id DROP NOT NULL"
             ))
+
+            # Добавить ogrn и поля ЗЧБ в companies
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "ogrn VARCHAR(15) UNIQUE"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "zcb_rating_category VARCHAR(50)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "zcb_risk_level VARCHAR(50)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "zcb_stop BOOLEAN"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "zcb_point INTEGER"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "zcb_checked_at TIMESTAMP"
+            ))

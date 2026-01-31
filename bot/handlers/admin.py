@@ -17,6 +17,7 @@ from database import (
 )
 from keyboards.admin_kb import AdminKeyboards
 from middleware import RoleRequiredMiddleware
+from services.honest_business_api import ZCBService, format_zcb_color
 
 
 class AdminStates(StatesGroup):
@@ -28,6 +29,7 @@ class AdminStates(StatesGroup):
     # Компании
     waiting_company_name = State()
     waiting_company_inn = State()
+    waiting_company_ogrn = State()
     waiting_company_daily_limit = State()
     editing_company_name = State()
     editing_company_inn = State()
@@ -54,7 +56,8 @@ class AdminHandlers:
             bank_repo: BankRepository,
             application_repo: ApplicationRepository,
             log_repo: LogRepository,
-            pending_group_codes: dict = None
+            pending_group_codes: dict = None,
+            zcb_service: ZCBService = None
     ):
         self.router = Router()
         self.user_repo = user_repo
@@ -64,6 +67,7 @@ class AdminHandlers:
         self.log_repo = log_repo
         self.kb = AdminKeyboards()
         self.pending_group_codes = pending_group_codes if pending_group_codes is not None else {}
+        self.zcb_service = zcb_service
 
         self._setup_middleware()
         self._setup_handlers()
@@ -106,6 +110,7 @@ class AdminHandlers:
         # FSM: компании
         self.router.message(AdminStates.waiting_company_name)(self.process_company_name)
         self.router.message(AdminStates.waiting_company_inn)(self.process_company_inn)
+        self.router.message(AdminStates.waiting_company_ogrn)(self.process_company_ogrn)
         self.router.message(AdminStates.waiting_company_daily_limit)(self.process_company_daily_limit)
         self.router.message(AdminStates.editing_company_name)(self.process_edit_company_name)
         self.router.message(AdminStates.editing_company_inn)(self.process_edit_company_inn)
@@ -608,9 +613,25 @@ class AdminHandlers:
             return
 
         await state.update_data(company_inn=inn)
-        await state.set_state(AdminStates.waiting_company_daily_limit)
+        await state.set_state(AdminStates.waiting_company_ogrn)
         await message.answer(
             f"✅ ИНН: <b>{inn}</b>\n\n"
+            "Введите ОГРН компании (13 или 15 цифр):",
+            reply_markup=self.kb.cancel_input(),
+            parse_mode="HTML"
+        )
+
+    async def process_company_ogrn(self, message: Message, state: FSMContext, db_user):
+        """Обработка ОГРН компании"""
+        ogrn = message.text.strip()
+        if not ogrn.isdigit() or len(ogrn) not in [13, 15]:
+            await message.answer("❌ ОГРН должен содержать 13 цифр (или 15 для ИП).")
+            return
+
+        await state.update_data(company_ogrn=ogrn)
+        await state.set_state(AdminStates.waiting_company_daily_limit)
+        await message.answer(
+            f"✅ ОГРН: <b>{ogrn}</b>\n\n"
             "Введите дневной лимит (в рублях):\n"
             "<i>Например: 5000000</i>",
             reply_markup=self.kb.cancel_input(),
@@ -630,20 +651,53 @@ class AdminHandlers:
         data = await state.get_data()
         await state.clear()
 
+        ogrn = data.get('company_ogrn')
+
         # Создаём компанию
         company = await self.company_repo.create(
             name=data['company_name'],
             inn=data['company_inn'],
+            ogrn=ogrn,
             daily_limit=limit,
             weekly_limit=limit * 5,
             monthly_limit=limit * 20
         )
 
+        # Проверяем в ЗЧБ
+        zcb_info = ""
+        if ogrn and self.zcb_service:
+            status_msg = await message.answer("🔍 Проверяю компанию в ЗЧБ...")
+            rating = await self.zcb_service.get_rating(ogrn)
+            if rating:
+                await self.company_repo.update_by_id(
+                    company.id,
+                    zcb_rating_category=rating['rating_category'],
+                    zcb_risk_level=rating['risk_level'],
+                    zcb_stop=rating['stop'],
+                    zcb_point=rating['point'],
+                    zcb_checked_at=rating['checked_at']
+                )
+                color_text = format_zcb_color(rating['risk_level'])
+                zcb_info = (
+                    f"\n\n<b>ЗЧБ:</b>\n"
+                    f"🎨 Цвет: {color_text}\n"
+                    f"📊 Индекс: {rating['rating_category']} ({rating['point']})\n"
+                    f"⚠️ Уровень риска: {rating['risk_level']}\n"
+                    f"🚫 Стоп-факт: {'Да' if rating['stop'] else 'Нет'}"
+                )
+            else:
+                zcb_info = "\n\n⚠️ Не удалось проверить в ЗЧБ"
+            try:
+                await status_msg.delete()
+            except:
+                pass
+
         await message.answer(
             f"✅ <b>Компания создана!</b>\n\n"
             f"🏢 {company.name}\n"
             f"🔢 ИНН: {company.inn}\n"
-            f"💰 Дневной лимит: {company.daily_limit:,.0f}₽",
+            f"🔢 ОГРН: {ogrn or '—'}\n"
+            f"💰 Дневной лимит: {company.daily_limit:,.0f}₽{zcb_info}",
             reply_markup=self.kb.back_to_menu(),
             parse_mode="HTML"
         )
@@ -667,10 +721,26 @@ class AdminHandlers:
             weekly_left = company.weekly_limit - company.current_weekly_used
             monthly_left = company.monthly_limit - company.current_monthly_used
 
+            zcb_text = ""
+            if company.zcb_risk_level:
+                color_text = format_zcb_color(company.zcb_risk_level)
+                zcb_text = (
+                    f"\n<b>ЗЧБ:</b>\n"
+                    f"🎨 Цвет: {color_text}\n"
+                    f"📊 Индекс: {company.zcb_rating_category} ({company.zcb_point})\n"
+                    f"🚫 Стоп-факт: {'Да' if company.zcb_stop else 'Нет'}\n"
+                )
+                if company.zcb_checked_at:
+                    zcb_text += f"🕐 Проверено: {company.zcb_checked_at.strftime('%d.%m.%Y %H:%M')}\n"
+            elif company.ogrn:
+                zcb_text = "\n🎨 ЗЧБ: ⚪ Не проверен\n"
+
             await callback.message.edit_text(
                 f"🏢 <b>{company.name}</b>\n\n"
                 f"🔢 ИНН: <code>{company.inn}</code>\n"
-                f"📊 Статус: {'✅ Активна' if company.is_active else '❌ Неактивна'}\n\n"
+                f"🔢 ОГРН: <code>{company.ogrn or '—'}</code>\n"
+                f"📊 Статус: {'✅ Активна' if company.is_active else '❌ Неактивна'}\n"
+                f"{zcb_text}\n"
                 f"<b>Лимиты:</b>\n"
                 f"📅 Дневной: {company.current_daily_used:,.0f} / {company.daily_limit:,.0f}₽ (осталось {daily_left:,.0f}₽)\n"
                 f"📆 Недельный: {company.current_weekly_used:,.0f} / {company.weekly_limit:,.0f}₽\n"

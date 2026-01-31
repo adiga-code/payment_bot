@@ -71,15 +71,23 @@ class Company(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     inn: Mapped[str] = mapped_column(String(12), unique=True, nullable=False, index=True)
-    
+    ogrn: Mapped[str | None] = mapped_column(String(15), unique=True, nullable=True, index=True)
+
     daily_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     weekly_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     monthly_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
-    
+
     current_daily_used: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     current_weekly_used: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     current_monthly_used: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
-    
+
+    # ЗЧБ (ЗАЧЕСТНЫЙБИЗНЕС) данные
+    zcb_rating_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    zcb_risk_level: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    zcb_stop: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    zcb_point: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    zcb_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
