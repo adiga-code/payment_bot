@@ -63,7 +63,7 @@ class AdminHandlers:
         self.application_repo = application_repo
         self.log_repo = log_repo
         self.kb = AdminKeyboards()
-        self.pending_group_codes = pending_group_codes or {}
+        self.pending_group_codes = pending_group_codes if pending_group_codes is not None else {}
 
         self._setup_middleware()
         self._setup_handlers()

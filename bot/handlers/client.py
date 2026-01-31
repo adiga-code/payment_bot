@@ -26,8 +26,8 @@ class ClientHandlers:
         self._setup_handlers()
 
     def _setup_handlers(self):
-        self.router.message(Command("start"))(self.start_command)
-        self.router.message(Command("zayavka"))(self.start_application)
+        self.router.message(Command("start"), F.chat.type == "private")(self.start_command)
+        self.router.message(Command("zayavka"), F.chat.type == "private")(self.start_application)
 
         self.router.message.register(self.process_amount, ApplicationForm.waiting_for_amount)
         self.router.message.register(self.process_inn, ApplicationForm.waiting_for_inn)
