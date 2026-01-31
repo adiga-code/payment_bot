@@ -838,6 +838,8 @@ class AdminHandlers:
             await callback.answer()
 
         elif action == "confirm_delete":
+            # Обнуляем ссылки на компанию в заявках перед удалением
+            await self.application_repo.clear_company(company_id)
             await self.company_repo.delete_by_id(company_id)
             await callback.message.edit_text(
                 "✅ Компания удалена",
@@ -1180,6 +1182,8 @@ class AdminHandlers:
             await callback.answer()
 
         elif action == "confirm_delete":
+            # Обнуляем ссылки на банк в заявках перед удалением
+            await self.application_repo.clear_bank(bank_id)
             await self.bank_repo.delete_by_id(bank_id)
             await callback.message.edit_text(
                 "✅ Банк удалён",
