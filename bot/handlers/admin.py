@@ -34,9 +34,9 @@ class AdminStates(StatesGroup):
     editing_company_limit = State()
 
     # Банки
-    waiting_bank_forward = State()  # Ожидание пересланного сообщения из чата банка
     waiting_bank_name = State()
     waiting_bank_daily_limit = State()
+    waiting_group_code = State()  # Ожидание кода подтверждения группы
     editing_bank_name = State()
     editing_bank_priority = State()
     editing_bank_limit = State()
@@ -53,7 +53,8 @@ class AdminHandlers:
             company_repo: CompanyRepository,
             bank_repo: BankRepository,
             application_repo: ApplicationRepository,
-            log_repo: LogRepository
+            log_repo: LogRepository,
+            pending_group_codes: dict = None
     ):
         self.router = Router()
         self.user_repo = user_repo
@@ -62,6 +63,7 @@ class AdminHandlers:
         self.application_repo = application_repo
         self.log_repo = log_repo
         self.kb = AdminKeyboards()
+        self.pending_group_codes = pending_group_codes or {}
 
         self._setup_middleware()
         self._setup_handlers()
@@ -117,9 +119,9 @@ class AdminHandlers:
         self.router.callback_query(F.data.startswith("admin:bank:") & ~F.data.contains("confirm"))(self.cb_bank_action)
 
         # FSM: банки
-        self.router.message(AdminStates.waiting_bank_forward)(self.process_bank_forward)
         self.router.message(AdminStates.waiting_bank_name)(self.process_bank_name)
         self.router.message(AdminStates.waiting_bank_daily_limit)(self.process_bank_daily_limit)
+        self.router.message(AdminStates.waiting_group_code)(self.process_group_code)
         self.router.message(AdminStates.editing_bank_name)(self.process_edit_bank_name)
         self.router.message(AdminStates.editing_bank_priority)(self.process_edit_bank_priority)
         self.router.message(AdminStates.editing_bank_limit)(self.process_edit_bank_limit)
@@ -320,26 +322,57 @@ class AdminHandlers:
                 'admin': '⚙️ Администратор'
             }
 
-            await callback.message.edit_text(
+            text = (
                 f"👤 <b>Пользователь</b>\n\n"
                 f"🆔 ID: <code>{user.telegram_id}</code>\n"
                 f"📛 Username: @{user.username or '—'}\n"
                 f"👤 Имя: {user.first_name or '—'} {user.last_name or ''}\n"
                 f"🎭 Роль: {role_names.get(user.role, user.role)}\n"
+            )
+
+            # Показываем привязку к банку для сотрудников банка
+            if user.bank_id:
+                bank = await self.bank_repo.get_by_id(user.bank_id)
+                bank_name = bank.name if bank else "Не найден"
+                text += f"🏦 Банк: {bank_name}\n"
+            elif user.role == 'bank':
+                text += f"🏦 Банк: <i>Не привязан</i>\n"
+
+            text += (
                 f"📊 Статус: {'✅ Активен' if user.is_active else '❌ Неактивен'}\n"
-                f"📅 Создан: {user.created_at.strftime('%d.%m.%Y %H:%M')}",
+                f"📅 Создан: {user.created_at.strftime('%d.%m.%Y %H:%M')}"
+            )
+
+            await callback.message.edit_text(
+                text,
                 reply_markup=self.kb.user_actions(user.id, user.is_active),
                 parse_mode="HTML"
             )
             await callback.answer()
             return
 
-        # Установка роли (обрабатываем отдельно, т.к. user_id не последний)
+        # Установка роли
         if action == "setrole":
             new_role = parts[-1]
             user_id = int(parts[-2])
 
-            # Если это новый пользователь (id=0)
+            # Если выбрана роль 'bank', показываем выбор банка
+            if new_role == 'bank':
+                banks = await self.bank_repo.get_all()
+                if not banks:
+                    await callback.answer("Нет доступных банков. Сначала добавьте банк.", show_alert=True)
+                    return
+
+                await callback.message.edit_text(
+                    "🏦 <b>Выберите банк</b>\n\n"
+                    "К какому банку привязать сотрудника?",
+                    reply_markup=self.kb.select_bank_for_user(user_id, banks),
+                    parse_mode="HTML"
+                )
+                await callback.answer()
+                return
+
+            # Для остальных ролей — обычное поведение
             if user_id == 0:
                 fsm_data = await state.get_data()
                 telegram_id = fsm_data.get('new_user_telegram_id')
@@ -366,7 +399,9 @@ class AdminHandlers:
                     parse_mode="HTML"
                 )
             else:
+                # При смене роли с 'bank' на другую — убираем bank_id
                 await self.user_repo.update_role(user_id, new_role)
+                await self.user_repo.update_bank(user_id, None)
                 user = await self.user_repo.get_by_id(user_id)
 
                 await callback.message.edit_text(
@@ -374,6 +409,66 @@ class AdminHandlers:
                     reply_markup=self.kb.user_actions(user_id, user.is_active),
                     parse_mode="HTML"
                 )
+            await callback.answer("Роль обновлена!")
+            return
+
+        # Выбор банка для роли 'bank'
+        if action == "setbank":
+            user_id = int(parts[1])
+            bank_choice = parts[2]
+
+            bank_id = None if bank_choice == 'skip' else int(bank_choice)
+
+            if user_id == 0:
+                # Новый пользователь
+                fsm_data = await state.get_data()
+                telegram_id = fsm_data.get('new_user_telegram_id')
+                username = fsm_data.get('new_user_username')
+                first_name = fsm_data.get('new_user_first_name')
+
+                if not telegram_id:
+                    await callback.answer("Ошибка: данные потеряны", show_alert=True)
+                    return
+
+                user = await self.user_repo.create(
+                    telegram_id=telegram_id,
+                    username=username,
+                    first_name=first_name,
+                    role='bank',
+                    bank_id=bank_id
+                )
+                await state.clear()
+
+                bank_info = ""
+                if bank_id:
+                    bank = await self.bank_repo.get_by_id(bank_id)
+                    bank_info = f"\n🏦 Банк: {bank.name}" if bank else ""
+
+                await callback.message.edit_text(
+                    f"✅ <b>Пользователь создан!</b>\n\n"
+                    f"👤 {first_name or username or telegram_id}\n"
+                    f"🎭 Роль: bank{bank_info}",
+                    reply_markup=self.kb.back_to_menu(),
+                    parse_mode="HTML"
+                )
+            else:
+                # Существующий пользователь
+                await self.user_repo.update_role(user_id, 'bank')
+                await self.user_repo.update_bank(user_id, bank_id)
+                user = await self.user_repo.get_by_id(user_id)
+
+                bank_info = ""
+                if bank_id:
+                    bank = await self.bank_repo.get_by_id(bank_id)
+                    bank_info = f"\n🏦 Банк: {bank.name}" if bank else ""
+
+                await callback.message.edit_text(
+                    f"✅ Роль изменена на <b>bank</b>{bank_info}",
+                    reply_markup=self.kb.user_actions(user_id, user.is_active),
+                    parse_mode="HTML"
+                )
+
+            await state.clear()
             await callback.answer("Роль обновлена!")
             return
 
@@ -785,92 +880,15 @@ class AdminHandlers:
         await callback.answer()
 
     async def cb_banks_add(self, callback: CallbackQuery, state: FSMContext, db_user):
-        """Добавление банка"""
-        await state.set_state(AdminStates.waiting_bank_forward)
+        """Добавление банка — начинаем с названия"""
+        await state.set_state(AdminStates.waiting_bank_name)
         await callback.message.edit_text(
             "🏦 <b>Добавление банка</b>\n\n"
-            "Введите <b>Chat ID</b> группы банка.\n\n"
-            "<b>Как узнать Chat ID:</b>\n"
-            "1️⃣ Добавьте бота @RawDataBot в группу банка\n"
-            "2️⃣ Он покажет Chat ID (число вида <code>-100123456789</code>)\n"
-            "3️⃣ Скопируйте и отправьте сюда\n\n"
-            "<i>Или перешлите сообщение из канала/супергруппы</i>",
-            reply_markup=self.kb.cancel_input(),
-            parse_mode="HTML"
-        )
-        await callback.answer()
-
-    async def process_bank_forward(self, message: Message, state: FSMContext, db_user):
-        """Обработка пересланного сообщения для добавления банка"""
-        chat_id = None
-        chat_title = None
-
-        # 1. Проверяем forward_from_chat (для каналов и супергрупп)
-        if message.forward_from_chat:
-            chat_id = message.forward_from_chat.id
-            chat_title = message.forward_from_chat.title
-
-        # 2. Проверяем forward_origin (новый API Telegram)
-        elif hasattr(message, 'forward_origin') and message.forward_origin:
-            origin = message.forward_origin
-            # MessageOriginChannel — атрибут 'chat'
-            if hasattr(origin, 'chat') and origin.chat:
-                chat_id = origin.chat.id
-                chat_title = getattr(origin.chat, 'title', None)
-            # MessageOriginChat (группы/супергруппы) — атрибут 'sender_chat'
-            elif hasattr(origin, 'sender_chat') and origin.sender_chat:
-                chat_id = origin.sender_chat.id
-                chat_title = getattr(origin.sender_chat, 'title', None)
-
-        # 3. Если отправили число напрямую (Chat ID)
-        elif message.text:
-            text = message.text.strip().replace(" ", "")
-            try:
-                chat_id = int(text)
-            except ValueError:
-                await message.answer(
-                    "❌ Не удалось определить Chat ID.\n\n"
-                    "Введите Chat ID числом (например: <code>-1001234567890</code>)\n\n"
-                    "<b>Как узнать Chat ID:</b>\n"
-                    "• Добавьте @RawDataBot в группу банка\n"
-                    "• Или @getmyid_bot",
-                    reply_markup=self.kb.cancel_input(),
-                    parse_mode="HTML"
-                )
-                return
-
-        if not chat_id:
-            await message.answer(
-                "❌ Не удалось определить Chat ID.\n\n"
-                "Введите Chat ID числом или перешлите сообщение из <b>канала</b>.",
-                reply_markup=self.kb.cancel_input(),
-                parse_mode="HTML"
-            )
-            return
-
-        # Проверяем, существует ли банк с таким chat_id
-        existing = await self.bank_repo.get_by_chat_id(chat_id)
-        if existing:
-            await state.clear()
-            await message.answer(
-                f"⚠️ Банк с таким Chat ID уже существует!\n\n"
-                f"🏦 {existing.name}",
-                reply_markup=self.kb.bank_actions(existing.id, existing.is_active, existing.is_available),
-                parse_mode="HTML"
-            )
-            return
-
-        await state.update_data(bank_chat_id=chat_id, bank_suggested_name=chat_title)
-        await state.set_state(AdminStates.waiting_bank_name)
-
-        suggested = f"\n\n<i>Предложенное название: {chat_title}</i>" if chat_title else ""
-
-        await message.answer(
-            f"✅ Chat ID: <code>{chat_id}</code>{suggested}\n\n"
             "Введите название банка:",
             reply_markup=self.kb.cancel_input(),
             parse_mode="HTML"
         )
+        await callback.answer()
 
     async def process_bank_name(self, message: Message, state: FSMContext, db_user):
         """Обработка названия банка"""
@@ -891,7 +909,7 @@ class AdminHandlers:
         )
 
     async def process_bank_daily_limit(self, message: Message, state: FSMContext, db_user):
-        """Обработка дневного лимита банка"""
+        """Обработка дневного лимита банка — создание банка без chat_id"""
         try:
             limit = Decimal(message.text.strip().replace(" ", "").replace(",", ""))
             if limit < 0:
@@ -903,20 +921,20 @@ class AdminHandlers:
         data = await state.get_data()
         await state.clear()
 
-        # Создаём банк
+        # Создаём банк БЕЗ chat_id
         bank = await self.bank_repo.create(
             name=data['bank_name'],
-            chat_id=data['bank_chat_id'],
             daily_limit=limit,
             weekly_limit=limit * 5
         )
 
         await message.answer(
-            f"✅ <b>Банк добавлен!</b>\n\n"
+            f"✅ <b>Банк создан!</b>\n\n"
             f"🏦 {bank.name}\n"
-            f"💬 Chat ID: <code>{bank.chat_id}</code>\n"
-            f"💰 Дневной лимит: {bank.daily_limit:,.0f}₽",
-            reply_markup=self.kb.back_to_menu(),
+            f"💰 Дневной лимит: {bank.daily_limit:,.0f}₽\n\n"
+            f"💬 Группа не привязана.\n"
+            f"Для привязки группы перейдите в настройки банка.",
+            reply_markup=self.kb.bank_actions(bank.id, bank.is_active, bank.is_available, has_chat=False),
             parse_mode="HTML"
         )
 
@@ -936,17 +954,25 @@ class AdminHandlers:
                 return
 
             daily_left = bank.daily_limit - bank.current_daily_used
+            has_chat = bank.chat_id is not None
+
+            chat_info = f"💬 Chat ID: <code>{bank.chat_id}</code>" if has_chat else "💬 Группа: <i>Не привязана</i>"
+
+            # Подсчёт сотрудников
+            employees = await self.user_repo.get_by_bank_id(bank_id)
+            emp_count = len(employees)
 
             await callback.message.edit_text(
                 f"🏦 <b>{bank.name}</b>\n\n"
-                f"💬 Chat ID: <code>{bank.chat_id}</code>\n"
+                f"{chat_info}\n"
+                f"👥 Сотрудников: {emp_count}\n"
                 f"⚡ Приоритет: {bank.priority}\n"
                 f"📊 Статус: {'✅ Активен' if bank.is_active else '❌ Неактивен'}\n"
                 f"🚦 Приём заявок: {'🟢 Открыт' if bank.is_available else '🔴 Закрыт'}\n\n"
                 f"<b>Лимиты:</b>\n"
                 f"📅 Дневной: {bank.current_daily_used:,.0f} / {bank.daily_limit:,.0f}₽ (осталось {daily_left:,.0f}₽)\n"
                 f"📆 Недельный: {bank.current_weekly_used:,.0f} / {bank.weekly_limit:,.0f}₽",
-                reply_markup=self.kb.bank_actions(bank.id, bank.is_active, bank.is_available),
+                reply_markup=self.kb.bank_actions(bank.id, bank.is_active, bank.is_available, has_chat),
                 parse_mode="HTML"
             )
             await callback.answer()
@@ -954,8 +980,37 @@ class AdminHandlers:
 
         bank_id = int(parts[-1])
 
+        # Привязка группы
+        if action == "link":
+            bot_info = await callback.bot.get_me()
+            bot_username = bot_info.username
+
+            await state.set_state(AdminStates.waiting_group_code)
+            await state.update_data(linking_bank_id=bank_id)
+
+            await callback.message.edit_text(
+                "💬 <b>Привязка группы</b>\n\n"
+                "1. Нажмите кнопку ниже, чтобы добавить бота в группу банка\n"
+                "2. Бот напишет в группу <b>код подтверждения</b>\n"
+                "3. Скопируйте код и отправьте его сюда\n\n"
+                "<i>Бот будет добавлен с правами администратора "
+                "(отправка и редактирование сообщений)</i>",
+                reply_markup=self.kb.link_group_button(bot_username),
+                parse_mode="HTML"
+            )
+            await callback.answer()
+
+        # Отвязка группы
+        elif action == "unlink":
+            await self.bank_repo.update_by_id(bank_id, chat_id=None)
+            bank = await self.bank_repo.get_by_id(bank_id)
+            await callback.answer("✅ Группа отвязана", show_alert=True)
+            await callback.message.edit_reply_markup(
+                reply_markup=self.kb.bank_actions(bank_id, bank.is_active, bank.is_available, has_chat=False)
+            )
+
         # Редактирование названия
-        if action == "edit" and parts[1] == "name":
+        elif action == "edit" and parts[1] == "name":
             await state.set_state(AdminStates.editing_bank_name)
             await state.update_data(editing_bank_id=bank_id)
             await callback.message.edit_text(
@@ -1013,7 +1068,7 @@ class AdminHandlers:
             await callback.answer("⏸️ Приём заявок приостановлен")
             bank = await self.bank_repo.get_by_id(bank_id)
             await callback.message.edit_reply_markup(
-                reply_markup=self.kb.bank_actions(bank_id, bank.is_active, False)
+                reply_markup=self.kb.bank_actions(bank_id, bank.is_active, False, has_chat=bank.chat_id is not None)
             )
 
         elif action == "available":
@@ -1021,7 +1076,7 @@ class AdminHandlers:
             await callback.answer("▶️ Приём заявок возобновлён")
             bank = await self.bank_repo.get_by_id(bank_id)
             await callback.message.edit_reply_markup(
-                reply_markup=self.kb.bank_actions(bank_id, bank.is_active, True)
+                reply_markup=self.kb.bank_actions(bank_id, bank.is_active, True, has_chat=bank.chat_id is not None)
             )
 
         # Деактивация
@@ -1030,7 +1085,7 @@ class AdminHandlers:
             await callback.answer("🚫 Банк деактивирован")
             bank = await self.bank_repo.get_by_id(bank_id)
             await callback.message.edit_reply_markup(
-                reply_markup=self.kb.bank_actions(bank_id, False, bank.is_available)
+                reply_markup=self.kb.bank_actions(bank_id, False, bank.is_available, has_chat=bank.chat_id is not None)
             )
 
         # Активация
@@ -1039,7 +1094,7 @@ class AdminHandlers:
             await callback.answer("✅ Банк активирован")
             bank = await self.bank_repo.get_by_id(bank_id)
             await callback.message.edit_reply_markup(
-                reply_markup=self.kb.bank_actions(bank_id, True, bank.is_available)
+                reply_markup=self.kb.bank_actions(bank_id, True, bank.is_available, has_chat=bank.chat_id is not None)
             )
 
         # Удаление
@@ -1061,6 +1116,61 @@ class AdminHandlers:
                 reply_markup=self.kb.back_to_menu()
             )
             await callback.answer()
+
+    async def process_group_code(self, message: Message, state: FSMContext, db_user):
+        """Обработка кода подтверждения группы"""
+        code = message.text.strip().upper()
+
+        if code not in self.pending_group_codes:
+            await message.answer(
+                "❌ Неверный код.\n\n"
+                "Убедитесь, что бот добавлен в группу и отправьте код, "
+                "который он написал в чат группы.",
+                reply_markup=self.kb.cancel_input()
+            )
+            return
+
+        code_data = self.pending_group_codes.pop(code)
+        chat_id = code_data['chat_id']
+        chat_title = code_data.get('chat_title', '')
+
+        fsm_data = await state.get_data()
+        bank_id = fsm_data.get('linking_bank_id')
+
+        if not bank_id:
+            await state.clear()
+            await message.answer(
+                "❌ Ошибка: данные о банке потеряны. Попробуйте заново.",
+                reply_markup=self.kb.back_to_menu()
+            )
+            return
+
+        # Проверяем, не привязан ли этот chat_id к другому банку
+        existing_bank = await self.bank_repo.get_by_chat_id(chat_id)
+        if existing_bank and existing_bank.id != bank_id:
+            await message.answer(
+                f"❌ Эта группа уже привязана к банку <b>{existing_bank.name}</b>!\n"
+                f"Сначала отвяжите группу от другого банка.",
+                reply_markup=self.kb.back_to_menu(),
+                parse_mode="HTML"
+            )
+            await state.clear()
+            return
+
+        # Привязываем группу к банку
+        await self.bank_repo.update_by_id(bank_id, chat_id=chat_id)
+        await state.clear()
+
+        bank = await self.bank_repo.get_by_id(bank_id)
+        title_info = f" ({chat_title})" if chat_title else ""
+
+        await message.answer(
+            f"✅ <b>Группа привязана!</b>\n\n"
+            f"🏦 Банк: {bank.name}\n"
+            f"💬 Группа: <code>{chat_id}</code>{title_info}",
+            reply_markup=self.kb.bank_actions(bank.id, bank.is_active, bank.is_available, has_chat=True),
+            parse_mode="HTML"
+        )
 
     async def process_edit_bank_name(self, message: Message, state: FSMContext, db_user):
         """Редактирование названия банка"""

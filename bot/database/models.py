@@ -27,15 +27,25 @@ class User(Base):
     first_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     role: Mapped[str] = mapped_column(
-        String(20), 
+        String(20),
         nullable=False,
         index=True
     )  # 'manager', 'bank', 'accountant', 'supervisor', 'admin'
+    bank_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey('banks.id', ondelete='SET NULL'),
+        nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Связи
+    bank: Mapped["Bank"] = relationship(
+        'Bank',
+        back_populates='employees',
+        foreign_keys=[bank_id]
+    )
     managed_applications: Mapped[list["Application"]] = relationship(
         'Application',
         back_populates='manager',
@@ -94,7 +104,7 @@ class Bank(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
+    chat_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, nullable=True, index=True)
     
     daily_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     weekly_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
@@ -110,6 +120,11 @@ class Bank(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Связи
+    employees: Mapped[list["User"]] = relationship(
+        'User',
+        back_populates='bank',
+        foreign_keys='User.bank_id'
+    )
     applications: Mapped[list["Application"]] = relationship(
         'Application',
         back_populates='bank'

@@ -142,6 +142,31 @@ class AdminKeyboards:
         return builder.as_markup()
 
     @staticmethod
+    def select_bank_for_user(user_id: int, banks: list) -> InlineKeyboardMarkup:
+        """Выбор банка при назначении роли 'bank'"""
+        builder = InlineKeyboardBuilder()
+
+        for bank in banks:
+            status = '✅' if bank.is_active else '❌'
+            builder.row(
+                InlineKeyboardButton(
+                    text=f"{status} {bank.name[:25]}",
+                    callback_data=f"admin:user:setbank:{user_id}:{bank.id}"
+                )
+            )
+
+        builder.row(
+            InlineKeyboardButton(
+                text="⏭️ Пропустить (без банка)",
+                callback_data=f"admin:user:setbank:{user_id}:skip"
+            )
+        )
+        builder.row(
+            InlineKeyboardButton(text="🔙 Отмена", callback_data=f"admin:user:role:{user_id}")
+        )
+        return builder.as_markup()
+
+    @staticmethod
     def confirm_action(action: str, entity_type: str, entity_id: int) -> InlineKeyboardMarkup:
         """Универсальное подтверждение действия"""
         builder = InlineKeyboardBuilder()
@@ -316,7 +341,7 @@ class AdminKeyboards:
         return builder.as_markup()
 
     @staticmethod
-    def bank_actions(bank_id: int, is_active: bool, is_available: bool) -> InlineKeyboardMarkup:
+    def bank_actions(bank_id: int, is_active: bool, is_available: bool, has_chat: bool = False) -> InlineKeyboardMarkup:
         """Действия с банком"""
         builder = InlineKeyboardBuilder()
 
@@ -330,6 +355,16 @@ class AdminKeyboards:
         builder.row(
             InlineKeyboardButton(text="🔄 Сбросить использование", callback_data=f"admin:bank:reset:{bank_id}")
         )
+
+        # Привязка/отвязка группы
+        if has_chat:
+            builder.row(
+                InlineKeyboardButton(text="🔗 Отвязать группу", callback_data=f"admin:bank:unlink:{bank_id}")
+            )
+        else:
+            builder.row(
+                InlineKeyboardButton(text="💬 Привязать группу", callback_data=f"admin:bank:link:{bank_id}")
+            )
 
         # Доступность
         if is_available:
@@ -369,6 +404,19 @@ class AdminKeyboards:
         )
         builder.row(
             InlineKeyboardButton(text="🔙 Назад", callback_data=f"admin:bank:{bank_id}")
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def link_group_button(bot_username: str) -> InlineKeyboardMarkup:
+        """Кнопка для добавления бота в группу"""
+        builder = InlineKeyboardBuilder()
+        url = f"https://t.me/{bot_username}?startgroup=link&admin=post_messages+edit_messages"
+        builder.row(
+            InlineKeyboardButton(text="➕ Добавить бота в группу", url=url)
+        )
+        builder.row(
+            InlineKeyboardButton(text="❌ Отмена", callback_data="admin:cancel")
         )
         return builder.as_markup()
 
