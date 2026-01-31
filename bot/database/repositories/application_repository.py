@@ -285,3 +285,29 @@ class ApplicationRepository(BaseRepository[Application]):
                 .order_by(Application.created_at.asc())
             )
             return list(result.scalars().all())
+
+    async def clear_company(self, company_id: int) -> int:
+        """Обнулить company_id у всех заявок компании (перед удалением)"""
+        from sqlalchemy import update
+        async with self.session_maker() as session:
+            stmt = (
+                update(Application)
+                .where(Application.company_id == company_id)
+                .values(company_id=None)
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount
+
+    async def clear_bank(self, bank_id: int) -> int:
+        """Обнулить bank_id у всех заявок банка (перед удалением)"""
+        from sqlalchemy import update
+        async with self.session_maker() as session:
+            stmt = (
+                update(Application)
+                .where(Application.bank_id == bank_id)
+                .values(bank_id=None)
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount
