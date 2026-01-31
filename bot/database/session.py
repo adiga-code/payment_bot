@@ -11,7 +11,26 @@ class DatabaseManager:
 
     async def initialise(self):
         '''
-            Создает все таблицы базы данных
+            Создает все таблицы базы данных и применяет миграции
         '''
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+
+        # Миграции для существующих таблиц
+        await self._apply_migrations()
+
+    async def _apply_migrations(self):
+        '''Добавление новых колонок в существующие таблицы'''
+        from sqlalchemy import text
+
+        async with self.engine.begin() as conn:
+            # Добавить bank_id в users (если не существует)
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "bank_id INTEGER REFERENCES banks(id) ON DELETE SET NULL"
+            ))
+
+            # Сделать banks.chat_id nullable (если ещё NOT NULL)
+            await conn.execute(text(
+                "ALTER TABLE banks ALTER COLUMN chat_id DROP NOT NULL"
+            ))
