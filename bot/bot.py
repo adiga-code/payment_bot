@@ -43,14 +43,15 @@ class PaymentBot:
         self.setting_repo = SettingRepository(self.db_manager.async_session)
 
     async def _setup_services(self):
+        self.zcb_service = ZCBService(api_key=self.config.ZCB_API_KEY)
         self.bot_logic = LogicService(
             db_manager=self.db_manager,
             application_repo=self.application_repo,
             user_repo=self.user_repo,
             approval_repo=self.approval_repo,
-            logger_repo=self.log_repo
+            logger_repo=self.log_repo,
+            zcb_service=self.zcb_service
         )
-        self.zcb_service = ZCBService(api_key=self.config.ZCB_API_KEY)
 
     async def _setup_handlers(self):
         # Обработчик добавления бота в группу (на уровне dispatcher, без middleware)
