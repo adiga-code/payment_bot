@@ -10,7 +10,7 @@ from aiogram.filters import ChatMemberUpdatedFilter, IS_NOT_MEMBER, MEMBER, ADMI
 from handlers import ClientHandlers, ManagerHandlers, AdminHandlers, BankHandlers, SupervisorHandlers
 from database import DatabaseManager
 from database import ApplicationRepository, UserRepository, LogRepository, ApprovalRepository, BankRepository, CompanyRepository, DocumentRepository, SettingRepository
-from services import LogicService, ZCBService
+from services import LogicService, ZCBService, NotificationService
 logging.basicConfig(level=logging.INFO)
 
 
@@ -44,6 +44,10 @@ class PaymentBot:
 
     async def _setup_services(self):
         self.zcb_service = ZCBService(api_key=self.config.ZCB_API_KEY)
+        self.notification_service = NotificationService(
+            bot=self.Bot,
+            user_repo=self.user_repo
+        )
         self.bot_logic = LogicService(
             db_manager=self.db_manager,
             application_repo=self.application_repo,
@@ -75,7 +79,8 @@ class PaymentBot:
             company_repo=self.company_repo,
             bank_repo=self.bank_repo,
             log_repo=self.log_repo,
-            bot=self.Bot
+            bot=self.Bot,
+            notification_service=self.notification_service
         )
 
         # Хендлеры администратора
@@ -96,7 +101,8 @@ class PaymentBot:
             approval_repo=self.approval_repo,
             bank_repo=self.bank_repo,
             log_repo=self.log_repo,
-            bot=self.Bot
+            bot=self.Bot,
+            notification_service=self.notification_service
         )
 
         # Хендлеры руководителя
@@ -108,7 +114,8 @@ class PaymentBot:
             bank_repo=self.bank_repo,
             log_repo=self.log_repo,
             document_repo=self.document_repo,
-            bot=self.Bot
+            bot=self.Bot,
+            notification_service=self.notification_service
         )
 
         # Регистрация роутеров

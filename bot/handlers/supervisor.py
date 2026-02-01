@@ -16,6 +16,7 @@ from database import (
     LogRepository,
     DocumentRepository
 )
+from services.notification import NotificationService
 from keyboards.supervisor_kb import SupervisorKeyboards
 from middleware import RoleRequiredMiddleware
 
@@ -39,7 +40,8 @@ class SupervisorHandlers:
             bank_repo: BankRepository,
             log_repo: LogRepository,
             document_repo: DocumentRepository,
-            bot: Bot
+            bot: Bot,
+            notification_service: NotificationService = None
     ):
         self.router = Router()
         self.user_repo = user_repo
@@ -50,6 +52,7 @@ class SupervisorHandlers:
         self.log_repo = log_repo
         self.document_repo = document_repo
         self.bot = bot
+        self.notification_service = notification_service
         self.kb = SupervisorKeyboards()
 
         self._setup_middleware()
@@ -289,8 +292,9 @@ class SupervisorHandlers:
             )
             await callback.answer("Заявка одобрена!")
 
-            # TODO: Отправить уведомление менеджеру
-            # TODO: Запустить генерацию счёта
+            if self.notification_service:
+                await self.notification_service.notify_client_approved(app)
+                await self.notification_service.notify_manager_final_decision(app, 'approved')
         else:
             # Просто одобряем свой этап
             await self.application_repo.update_status(app_id, 'approved')
@@ -401,7 +405,8 @@ class SupervisorHandlers:
         )
         await callback.answer("Возвращено менеджеру")
 
-        # TODO: Уведомить менеджера
+        if self.notification_service:
+            await self.notification_service.notify_manager_returned(app)
 
     async def cb_confirm(self, callback: CallbackQuery, db_user):
         """Обработка подтверждения действий"""
@@ -495,7 +500,9 @@ class SupervisorHandlers:
             details={'reason': reason}
         )
 
-        # TODO: Уведомить клиента и менеджера
+        if self.notification_service:
+            await self.notification_service.notify_client_rejected(app, reason, "руководитель")
+            await self.notification_service.notify_manager_final_decision(app, 'rejected', reason)
 
     def _format_application(self, app) -> str:
         """Форматирование заявки"""
