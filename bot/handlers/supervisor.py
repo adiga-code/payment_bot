@@ -17,6 +17,7 @@ from database import (
     DocumentRepository
 )
 from services.notification import NotificationService
+from services.document import DocumentService
 from keyboards.supervisor_kb import SupervisorKeyboards
 from middleware import RoleRequiredMiddleware
 
@@ -41,7 +42,8 @@ class SupervisorHandlers:
             log_repo: LogRepository,
             document_repo: DocumentRepository,
             bot: Bot,
-            notification_service: NotificationService = None
+            notification_service: NotificationService = None,
+            document_service: DocumentService = None
     ):
         self.router = Router()
         self.user_repo = user_repo
@@ -53,6 +55,7 @@ class SupervisorHandlers:
         self.document_repo = document_repo
         self.bot = bot
         self.notification_service = notification_service
+        self.document_service = document_service
         self.kb = SupervisorKeyboards()
 
         self._setup_middleware()
@@ -281,12 +284,27 @@ class SupervisorHandlers:
             if app.bank_id:
                 await self.bank_repo.update_usage(app.bank_id, app.amount, increment=True)
 
+            # Генерируем счёт
+            invoice_number = None
+            if self.document_service:
+                file_path = await self.document_service.generate_invoice(app_id)
+                if file_path:
+                    # Получаем номер из БД
+                    doc = await self.document_repo.get_latest_invoice(app_id)
+                    if doc:
+                        invoice_number = doc.number
+
+            invoice_text = ""
+            if invoice_number:
+                invoice_text = f"🧾 Счёт: <b>{invoice_number}</b>\n"
+
             await callback.message.edit_text(
                 f"✅ <b>Заявка одобрена!</b>\n\n"
                 f"📋 {app.external_id}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
                 f"🎉 Все подписи собраны.\n"
-                f"📄 Можно генерировать счёт.",
+                f"{invoice_text}"
+                f"📄 Счёт отправлен бухгалтеру.",
                 reply_markup=self.kb.back_to_menu(),
                 parse_mode="HTML"
             )
@@ -295,6 +313,8 @@ class SupervisorHandlers:
             if self.notification_service:
                 await self.notification_service.notify_client_approved(app)
                 await self.notification_service.notify_manager_final_decision(app, 'approved')
+                if invoice_number:
+                    await self.notification_service.notify_accountants_invoice_ready(app, invoice_number)
         else:
             # Просто одобряем свой этап
             await self.application_repo.update_status(app_id, 'approved')
