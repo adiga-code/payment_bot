@@ -7,10 +7,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import ChatMemberUpdated
 from aiogram.filters import ChatMemberUpdatedFilter, IS_NOT_MEMBER, MEMBER, ADMINISTRATOR
 
-from handlers import ClientHandlers, ManagerHandlers, AdminHandlers, BankHandlers, SupervisorHandlers
+from handlers import ClientHandlers, ManagerHandlers, AdminHandlers, BankHandlers, SupervisorHandlers, AccountantHandlers
 from database import DatabaseManager
 from database import ApplicationRepository, UserRepository, LogRepository, ApprovalRepository, BankRepository, CompanyRepository, DocumentRepository, SettingRepository
 from services import LogicService, ZCBService, NotificationService
+from services.document import DocumentService
 logging.basicConfig(level=logging.INFO)
 
 
@@ -47,6 +48,10 @@ class PaymentBot:
         self.notification_service = NotificationService(
             bot=self.Bot,
             user_repo=self.user_repo
+        )
+        self.document_service = DocumentService(
+            document_repo=self.document_repo,
+            application_repo=self.application_repo
         )
         self.bot_logic = LogicService(
             db_manager=self.db_manager,
@@ -115,6 +120,17 @@ class PaymentBot:
             log_repo=self.log_repo,
             document_repo=self.document_repo,
             bot=self.Bot,
+            notification_service=self.notification_service,
+            document_service=self.document_service
+        )
+
+        # Хендлеры бухгалтера
+        self.accountant_handlers = AccountantHandlers(
+            user_repo=self.user_repo,
+            application_repo=self.application_repo,
+            document_repo=self.document_repo,
+            log_repo=self.log_repo,
+            bot=self.Bot,
             notification_service=self.notification_service
         )
 
@@ -124,6 +140,7 @@ class PaymentBot:
         self.dp.include_router(self.admin_handlers.router)
         self.dp.include_router(self.bank_handlers.router)
         self.dp.include_router(self.supervisor_handlers.router)
+        self.dp.include_router(self.accountant_handlers.router)
 
     async def _on_bot_added_to_group(self, event: ChatMemberUpdated):
         """Обработка добавления бота в группу/супергруппу"""

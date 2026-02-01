@@ -127,3 +127,24 @@ class NotificationService:
 
         for sv in supervisors:
             await self._safe_send(sv.telegram_id, text)
+
+    # ==================== УВЕДОМЛЕНИЯ БУХГАЛТЕРУ ====================
+
+    async def notify_accountants_invoice_ready(self, app, invoice_number: str):
+        """Уведомить бухгалтеров о новом счёте"""
+        accountants = await self.user_repo.get_accountants()
+
+        text = (
+            f"📄 <b>Новый счёт на отправку</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"🧾 Счёт: <b>{invoice_number}</b>\n"
+            f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
+        )
+
+        if app.payer_name:
+            text += f"📛 Плательщик: {app.payer_name}\n"
+
+        text += f"\n🔔 Используйте /accountant для просмотра."
+
+        for acc in accountants:
+            await self._safe_send(acc.telegram_id, text)
