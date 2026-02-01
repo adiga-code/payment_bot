@@ -531,6 +531,7 @@ class SupervisorHandlers:
             'primary_check': '🔍 Проверка',
             'manager_review': '👔 У менеджера',
             'bank_review': '🏦 В банке',
+            'awaiting_contract_details': '📝 Ожидание данных договора',
             'supervisor_review': '👑 На одобрении',
             'approved': '✅ Одобрена',
             'rejected': '❌ Отклонена',

@@ -73,7 +73,9 @@ class PaymentBot:
         # Клиентские хендлеры
         self.client_handlers = ClientHandlers(
             logic_service=self.bot_logic,
-            user_repo=self.user_repo
+            user_repo=self.user_repo,
+            application_repo=self.application_repo,
+            notification_service=self.notification_service
         )
 
         # Хендлеры менеджера

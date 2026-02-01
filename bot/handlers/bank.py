@@ -129,43 +129,44 @@ class BankHandlers:
         employee_name = db_user.first_name or db_user.username
 
         if risk_level == "min_risk":
-            # Минимальный риск - эскалация к руководителю
+            # Минимальный риск - эскалация к руководителю (запись создаётся сразу)
             await self.approval_repo.create_escalation(
                 app_id=app_id,
                 role='supervisor',
                 reason='Минимальный риск - требуется решение руководителя',
                 sequence=0
             )
-            await self.application_repo.update_status(app_id, 'supervisor_review')
+            # Ожидаем данные договора от клиента
+            await self.application_repo.update_status(app_id, 'awaiting_contract_details')
 
             await callback.message.edit_text(
                 f"⚠️ <b>Минимальный риск</b>\n\n"
                 f"📋 {app.external_id}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
                 f"👤 Оценил: {employee_name}\n"
-                f"📤 Заявка отправлена руководителю на решение.",
+                f"📝 Клиенту отправлен запрос на данные договора.",
                 parse_mode="HTML"
             )
-            await callback.answer("Отправлено руководителю")
+            await callback.answer("Одобрено банком")
 
             if self.notification_service:
-                await self.notification_service.notify_supervisors_new_application(app, risk_level="min_risk")
+                await self.notification_service.notify_client_contract_details_needed(app)
         else:
-            # Без риска - на финальное одобрение
-            await self.application_repo.update_status(app_id, 'supervisor_review')
+            # Без риска - ожидаем данные договора от клиента
+            await self.application_repo.update_status(app_id, 'awaiting_contract_details')
 
             await callback.message.edit_text(
                 f"✅ <b>Без риска</b>\n\n"
                 f"📋 {app.external_id}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
                 f"👤 Оценил: {employee_name}\n"
-                f"📤 Заявка отправлена руководителю на финальное одобрение.",
+                f"📝 Клиенту отправлен запрос на данные договора.",
                 parse_mode="HTML"
             )
-            await callback.answer("Отправлено руководителю")
+            await callback.answer("Одобрено банком")
 
             if self.notification_service:
-                await self.notification_service.notify_supervisors_new_application(app, risk_level="no_risk")
+                await self.notification_service.notify_client_contract_details_needed(app)
 
     async def cb_reject_reason(self, callback: CallbackQuery, db_user):
         """Отклонение заявки с выбранной причиной"""

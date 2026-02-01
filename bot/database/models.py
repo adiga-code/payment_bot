@@ -73,6 +73,18 @@ class Company(Base):
     inn: Mapped[str] = mapped_column(String(12), unique=True, nullable=False, index=True)
     ogrn: Mapped[str | None] = mapped_column(String(15), unique=True, nullable=True, index=True)
 
+    # Юридические реквизиты
+    kpp: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    legal_address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    director_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    accountant_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Банковские реквизиты компании
+    bank_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    bank_bik: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    bank_account: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    bank_corr_account: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
     daily_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     weekly_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     monthly_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
@@ -188,8 +200,15 @@ class Application(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     payer_inn: Mapped[str] = mapped_column(String(12), nullable=False)
     payer_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    payer_kpp: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    payer_address: Mapped[str | None] = mapped_column(String(500), nullable=True)
     purpose: Mapped[str] = mapped_column(Text, nullable=False)
-    
+
+    # Данные договора (заполняет клиент после одобрения банком)
+    contract_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    contract_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    invoice_purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Связи
     company_id: Mapped[int | None] = mapped_column(
         Integer,
