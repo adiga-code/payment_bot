@@ -16,6 +16,7 @@ from database import (
     BankRepository,
     LogRepository
 )
+from services.notification import NotificationService
 from keyboards import ManagerKeyboards
 from keyboards.bank_kb import BankKeyboards
 from middleware import RoleRequiredMiddleware
@@ -39,7 +40,8 @@ class ManagerHandlers:
             company_repo: CompanyRepository,
             bank_repo: BankRepository,
             log_repo: LogRepository,
-            bot: Bot
+            bot: Bot,
+            notification_service: NotificationService = None
     ):
         self.router = Router()
         self.user_repo = user_repo
@@ -49,6 +51,7 @@ class ManagerHandlers:
         self.bank_repo = bank_repo
         self.log_repo = log_repo
         self.bot = bot
+        self.notification_service = notification_service
         self.kb = ManagerKeyboards()
         self.bank_kb = BankKeyboards()
 
@@ -440,7 +443,8 @@ class ManagerHandlers:
             parse_mode="HTML"
         )
 
-        # TODO: Уведомить клиента
+        if self.notification_service:
+            await self.notification_service.notify_client_rejected(app, reason, "менеджер")
 
     async def cb_escalate(self, callback: CallbackQuery, db_user):
         """Эскалация к руководителю"""
@@ -484,7 +488,8 @@ class ManagerHandlers:
         )
         await callback.answer("Заявка отправлена руководителю")
 
-        # TODO: Уведомить руководителя
+        if self.notification_service:
+            await self.notification_service.notify_supervisors_escalation(app, "менеджер")
 
     # ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
 
@@ -540,7 +545,8 @@ class ManagerHandlers:
         )
         await callback.answer("Заявка отклонена")
 
-        # TODO: Уведомить клиента
+        if self.notification_service:
+            await self.notification_service.notify_client_rejected(app, reason, "менеджер")
 
     def _format_application(self, app) -> str:
         """Форматирование заявки для отображения"""

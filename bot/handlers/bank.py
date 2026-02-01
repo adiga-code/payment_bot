@@ -10,6 +10,7 @@ from database import (
     BankRepository,
     LogRepository
 )
+from services.notification import NotificationService
 from keyboards.bank_kb import BankKeyboards
 from middleware import RoleRequiredMiddleware
 
@@ -34,7 +35,8 @@ class BankHandlers:
             approval_repo: ApprovalRepository,
             bank_repo: BankRepository,
             log_repo: LogRepository,
-            bot: Bot
+            bot: Bot,
+            notification_service: NotificationService = None
     ):
         self.router = Router()
         self.user_repo = user_repo
@@ -43,6 +45,7 @@ class BankHandlers:
         self.bank_repo = bank_repo
         self.log_repo = log_repo
         self.bot = bot
+        self.notification_service = notification_service
         self.kb = BankKeyboards()
 
         self._setup_middleware()
@@ -145,7 +148,8 @@ class BankHandlers:
             )
             await callback.answer("Отправлено руководителю")
 
-            # TODO: Уведомить руководителя
+            if self.notification_service:
+                await self.notification_service.notify_supervisors_new_application(app, risk_level="min_risk")
         else:
             # Без риска - на финальное одобрение
             await self.application_repo.update_status(app_id, 'supervisor_review')
@@ -160,7 +164,8 @@ class BankHandlers:
             )
             await callback.answer("Отправлено руководителю")
 
-            # TODO: Уведомить руководителя
+            if self.notification_service:
+                await self.notification_service.notify_supervisors_new_application(app, risk_level="no_risk")
 
     async def cb_reject_reason(self, callback: CallbackQuery, db_user):
         """Отклонение заявки с выбранной причиной"""
@@ -206,7 +211,9 @@ class BankHandlers:
         )
         await callback.answer("Заявка отклонена")
 
-        # TODO: Уведомить клиента и менеджера
+        if self.notification_service:
+            await self.notification_service.notify_client_rejected(app, reason, "банк")
+            await self.notification_service.notify_manager_final_decision(app, 'rejected', reason)
 
     async def cb_cancel_reject(self, callback: CallbackQuery, db_user):
         """Отмена отклонения — возврат к кнопкам оценки риска"""
