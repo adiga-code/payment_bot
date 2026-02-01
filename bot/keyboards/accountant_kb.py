@@ -71,6 +71,12 @@ class AccountantKeyboards:
                     callback_data=f"acc:send:{doc_id}"
                 )
             )
+            builder.row(
+                InlineKeyboardButton(
+                    text="🔄 Перегенерировать",
+                    callback_data=f"acc:regen:{doc_id}"
+                )
+            )
 
         builder.row(
             InlineKeyboardButton(text="🔙 К списку", callback_data="acc:pending")

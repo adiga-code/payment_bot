@@ -13,6 +13,7 @@ from database import (
     LogRepository
 )
 from services.notification import NotificationService
+from services.document import DocumentService
 from keyboards.accountant_kb import AccountantKeyboards
 from middleware import RoleRequiredMiddleware
 
@@ -29,7 +30,8 @@ class AccountantHandlers:
             document_repo: DocumentRepository,
             log_repo: LogRepository,
             bot: Bot,
-            notification_service: NotificationService = None
+            notification_service: NotificationService = None,
+            document_service: DocumentService = None
     ):
         self.router = Router()
         self.user_repo = user_repo
@@ -38,6 +40,7 @@ class AccountantHandlers:
         self.log_repo = log_repo
         self.bot = bot
         self.notification_service = notification_service
+        self.document_service = document_service
         self.kb = AccountantKeyboards()
 
         self._setup_middleware()
@@ -61,6 +64,7 @@ class AccountantHandlers:
         self.router.callback_query(F.data.startswith("acc:doc:"))(self.cb_view_invoice)
         self.router.callback_query(F.data.startswith("acc:send:"))(self.cb_send_to_client)
         self.router.callback_query(F.data.startswith("acc:confirm_send:"))(self.cb_confirm_send)
+        self.router.callback_query(F.data.startswith("acc:regen:"))(self.cb_regenerate)
 
     # ==================== КОМАНДЫ ====================
 
@@ -296,6 +300,76 @@ class AccountantHandlers:
             parse_mode="HTML"
         )
         await callback.answer("Отправлено!")
+
+    async def cb_regenerate(self, callback: CallbackQuery, db_user):
+        """Перегенерация счёта"""
+        doc_id = int(callback.data.split(":")[-1])
+        doc = await self.document_repo.get_by_id(doc_id)
+
+        if not doc:
+            await callback.answer("Документ не найден", show_alert=True)
+            return
+
+        if doc.sent_to_client_at:
+            await callback.answer("Нельзя перегенерировать отправленный счёт", show_alert=True)
+            return
+
+        if not self.document_service:
+            await callback.answer("Сервис документов недоступен", show_alert=True)
+            return
+
+        app_id = doc.application_id
+
+        # Генерируем новый счёт (старый деактивируется внутри generate_invoice)
+        file_path = await self.document_service.generate_invoice(app_id)
+
+        if not file_path:
+            await callback.answer("Ошибка генерации счёта", show_alert=True)
+            return
+
+        # Получаем новый документ
+        new_doc = await self.document_repo.get_latest_invoice(app_id)
+        if not new_doc:
+            await callback.answer("Ошибка: документ не найден", show_alert=True)
+            return
+
+        # Лог
+        await self.log_repo.create_log(
+            action='invoice_regenerated',
+            application_id=app_id,
+            user_id=db_user.id,
+            details={'old_doc_id': doc_id, 'new_doc_id': new_doc.id, 'invoice_number': new_doc.number}
+        )
+
+        app = await self.application_repo.get_with_relations(app_id)
+        company_name = app.company.name if app and app.company else "—"
+        bank_name = app.bank.name if app and app.bank else "—"
+
+        text = (
+            f"🔄 <b>Счёт перегенерирован</b>\n\n"
+            f"📄 Новый: <b>{new_doc.number}</b>\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
+            f"🏢 Компания: {company_name}\n"
+            f"🏦 Банк: {bank_name}\n\n"
+            f"📌 Статус: ⏳ Не отправлен клиенту"
+        )
+
+        # Отправляем новый файл
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+
+        file = FSInputFile(file_path)
+        await self.bot.send_document(
+            chat_id=callback.message.chat.id,
+            document=file,
+            caption=text,
+            reply_markup=self.kb.invoice_actions(new_doc.id, is_sent=False),
+            parse_mode="HTML"
+        )
+        await callback.answer("Счёт перегенерирован")
 
     async def cb_stats(self, callback: CallbackQuery, db_user):
         """Статистика бухгалтера"""
