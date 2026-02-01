@@ -60,3 +60,61 @@ class DatabaseManager:
                 "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
                 "zcb_checked_at TIMESTAMP"
             ))
+
+            # Юридические реквизиты компании
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "kpp VARCHAR(9)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "legal_address VARCHAR(500)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "director_name VARCHAR(255)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "accountant_name VARCHAR(255)"
+            ))
+
+            # Банковские реквизиты компании
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "bank_name VARCHAR(255)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "bank_bik VARCHAR(9)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "bank_account VARCHAR(20)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "bank_corr_account VARCHAR(20)"
+            ))
+
+            # Данные покупателя и договора в заявках
+            await conn.execute(text(
+                "ALTER TABLE applications ADD COLUMN IF NOT EXISTS "
+                "payer_kpp VARCHAR(9)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE applications ADD COLUMN IF NOT EXISTS "
+                "payer_address VARCHAR(500)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE applications ADD COLUMN IF NOT EXISTS "
+                "contract_number VARCHAR(100)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE applications ADD COLUMN IF NOT EXISTS "
+                "contract_date VARCHAR(20)"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE applications ADD COLUMN IF NOT EXISTS "
+                "invoice_purpose TEXT"
+            ))

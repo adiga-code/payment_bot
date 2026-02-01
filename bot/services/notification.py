@@ -46,6 +46,28 @@ class NotificationService:
         )
         await self._safe_send(app.client_chat_id, text)
 
+    async def notify_client_contract_details_needed(self, app):
+        """Уведомить клиента о необходимости заполнить данные договора"""
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📝 Заполнить данные договора",
+                callback_data=f"client:fill_contract:{app.id}"
+            )]
+        ])
+
+        text = (
+            f"🏦 <b>Заявка {app.external_id} одобрена банком!</b>\n\n"
+            f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n\n"
+            f"Для формирования счёта необходимо указать:\n"
+            f"• Номер договора\n"
+            f"• Дату договора\n"
+            f"• Назначение платежа для счёта\n\n"
+            f"Нажмите кнопку ниже:"
+        )
+        await self._safe_send(app.client_chat_id, text, reply_markup=kb)
+
     # ==================== УВЕДОМЛЕНИЯ МЕНЕДЖЕРУ ====================
 
     async def notify_manager_returned(self, app, reason: str = "Возвращено на доработку"):

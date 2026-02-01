@@ -57,12 +57,16 @@ class LogicService:
                         'payer_name': check_result.get('name'),
                     }
                 )
-                # Обновляем payer_name если нашли
+                # Обновляем данные плательщика из ЗЧБ
+                update_fields = {}
                 if check_result.get('name'):
-                    await self.application_repo.update_by_id(
-                        app.id,
-                        payer_name=check_result['name']
-                    )
+                    update_fields['payer_name'] = check_result['name']
+                if check_result.get('kpp'):
+                    update_fields['payer_kpp'] = check_result['kpp']
+                if check_result.get('address'):
+                    update_fields['payer_address'] = check_result['address']
+                if update_fields:
+                    await self.application_repo.update_by_id(app.id, **update_fields)
             except Exception as e:
                 logger.error(f"ZCB check failed for {data['inn']}: {e}")
                 await self.application_repo.update_primary_check(

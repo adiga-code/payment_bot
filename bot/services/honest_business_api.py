@@ -110,6 +110,8 @@ class ZCBService:
             'ogrn': item.get('id') or item.get('ogrn'),
             'inn': item.get('inn', inn),
             'name': item.get('name') or item.get('fullName') or item.get('shortName'),
+            'kpp': item.get('kpp'),
+            'address': item.get('address') or item.get('legalAddress'),
             'status': item.get('status'),
             'raw': item,
         }
@@ -147,6 +149,8 @@ class ZCBService:
             'inn': inn,
             'name': None,
             'ogrn': None,
+            'kpp': None,
+            'address': None,
             'rating_category': None,
             'risk_level': None,
             'stop': None,
@@ -164,6 +168,8 @@ class ZCBService:
 
         result['name'] = search_data.get('name')
         result['ogrn'] = search_data.get('ogrn')
+        result['kpp'] = search_data.get('kpp')
+        result['address'] = search_data.get('address')
 
         # 2. Рейтинг по ОГРН
         ogrn = search_data.get('ogrn')
