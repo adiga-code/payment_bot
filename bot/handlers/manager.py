@@ -6,6 +6,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from typing import Optional
+from services.honest_business_api import format_payer_check
 
 from database import (
     ApplicationRepository,
@@ -347,8 +348,10 @@ class ManagerHandlers:
             if app.payer_name:
                 notification_text += f"📛 Плательщик: {app.payer_name}\n"
             notification_text += f"📝 Назначение: {app.purpose}\n"
+            if app.primary_check_result:
+                notification_text += f"\n{format_payer_check(app.primary_check_result)}\n"
             if app.company:
-                notification_text += f"🏢 Компания: {app.company.name}\n"
+                notification_text += f"\n🏢 Компания: {app.company.name}\n"
             notification_text += (
                 f"\n👔 Менеджер: {db_user.first_name or db_user.username}\n"
                 f"\n<b>Оцените уровень риска:</b>"
@@ -563,6 +566,10 @@ class ManagerHandlers:
 
         text += f"📝 Назначение: {app.purpose}\n"
         text += f"📅 Создана: {app.created_at.strftime('%d.%m.%Y %H:%M')}\n"
+
+        # Результаты проверки ЗЧБ
+        if app.primary_check_result:
+            text += f"\n{format_payer_check(app.primary_check_result)}\n"
 
         if app.company:
             text += f"\n🏢 Компания: {app.company.name}\n"
