@@ -5,7 +5,32 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 class BankKeyboards:
-    """Клавиатуры для группового чата банка"""
+    """Клавиатуры для банка (групповой чат + личный кабинет)"""
+
+    # ==================== ПАНЕЛЬ БАНКА (личный чат) ====================
+
+    @staticmethod
+    def panel_menu() -> InlineKeyboardMarkup:
+        """Главное меню панели банка"""
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="📊 Статистика", callback_data="bankpanel:stats")
+        )
+        builder.row(
+            InlineKeyboardButton(text="📈 Лимиты", callback_data="bankpanel:limits")
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def back_to_panel() -> InlineKeyboardMarkup:
+        """Кнопка возврата в панель"""
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="◀️ Назад", callback_data="bankpanel:menu")
+        )
+        return builder.as_markup()
+
+    # ==================== ГРУППОВОЙ ЧАТ ====================
 
     @staticmethod
     def group_risk_assessment(app_id: int) -> InlineKeyboardMarkup:

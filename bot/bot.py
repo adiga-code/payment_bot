@@ -12,6 +12,7 @@ from database import DatabaseManager
 from database import ApplicationRepository, UserRepository, LogRepository, ApprovalRepository, BankRepository, CompanyRepository, DocumentRepository, SettingRepository
 from services import LogicService, ZCBService, NotificationService
 from services.document import DocumentService
+from services.scheduler import SchedulerService
 logging.basicConfig(level=logging.INFO)
 
 
@@ -185,10 +186,19 @@ class PaymentBot:
             logging.error(f"Failed to send group code to {chat.id}: {e}")
 
 
+    async def _setup_scheduler(self):
+        """Запуск фоновых задач (сброс лимитов)"""
+        self.scheduler = SchedulerService(
+            company_repo=self.company_repo,
+            bank_repo=self.bank_repo
+        )
+        await self.scheduler.start()
+
     async def start(self):
         logging.info("Bot is starting...")
         await self._setup_database()
         await self._setup_repositories()
         await self._setup_services()
         await self._setup_handlers()
+        await self._setup_scheduler()
         await self.dp.start_polling(self.Bot)

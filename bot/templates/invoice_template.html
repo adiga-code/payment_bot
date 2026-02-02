@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Счет на оплату №{{ invoice_number }} от {{ invoice_date }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 1cm;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Times New Roman", Times, serif;
+            font-size: 11pt;
+            line-height: 1.3;
+            color: #000;
+        }
+
+        .header-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 10px;
+            font-size: 9pt;
+        }
+
+        .header-table td {
+            border: 1px solid #000;
+            padding: 3px 5px;
+            vertical-align: top;
+        }
+
+        .header-table .label {
+            font-weight: normal;
+            white-space: nowrap;
+        }
+
+        h1 {
+            font-size: 14pt;
+            font-weight: bold;
+            text-align: left;
+            margin: 15px 0 10px 0;
+            border-bottom: 2px solid #000;
+            padding-bottom: 3px;
+        }
+
+        .info-section {
+            margin-bottom: 10px;
+            font-size: 10pt;
+        }
+
+        .info-section table {
+            width: 100%;
+        }
+
+        .info-section td {
+            padding: 2px 0;
+        }
+
+        .info-section .label {
+            font-weight: bold;
+            width: 120px;
+            vertical-align: top;
+        }
+
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+            font-size: 10pt;
+        }
+
+        .items-table th,
+        .items-table td {
+            border: 1px solid #000;
+            padding: 5px;
+            text-align: left;
+        }
+
+        .items-table th {
+            background-color: #f0f0f0;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .items-table .num {
+            width: 30px;
+            text-align: center;
+        }
+
+        .items-table .qty {
+            width: 60px;
+            text-align: right;
+        }
+
+        .items-table .unit {
+            width: 40px;
+            text-align: center;
+        }
+
+        .items-table .price,
+        .items-table .sum {
+            width: 100px;
+            text-align: right;
+        }
+
+        .total-section {
+            margin: 10px 0;
+            font-size: 11pt;
+        }
+
+        .total-row {
+            display: flex;
+            justify-content: flex-end;
+            margin: 3px 0;
+        }
+
+        .total-label {
+            text-align: right;
+            margin-right: 20px;
+            font-weight: bold;
+        }
+
+        .total-value {
+            width: 150px;
+            text-align: right;
+            border-bottom: 1px solid #000;
+        }
+
+        .amount-words {
+            margin: 15px 0;
+            font-size: 10pt;
+        }
+
+        .payment-terms {
+            margin: 15px 0 20px 0;
+            font-size: 9pt;
+            line-height: 1.4;
+        }
+
+        .signature-section {
+            margin-top: 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .signature-block {
+            display: flex;
+            align-items: center;
+            gap: 30px;
+        }
+
+        .signature-title {
+            font-weight: bold;
+            font-size: 11pt;
+        }
+
+        .signature-line {
+            width: 150px;
+            border-bottom: 1px solid #000;
+            height: 40px;
+            position: relative;
+        }
+
+        .signature-name {
+            font-size: 10pt;
+            margin-left: 10px;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid #000;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <!-- Банковские реквизиты получателя -->
+    <table class="header-table">
+        <tr>
+            <td class="label" rowspan="2">Банк получателя</td>
+            <td colspan="2">{{ supplier.bank_name }}</td>
+            <td class="label">БИК</td>
+            <td>{{ supplier.bank_bik }}</td>
+        </tr>
+        <tr>
+            <td class="label">ИНН</td>
+            <td>{{ supplier.inn }}</td>
+            <td class="label">Сч. №</td>
+            <td>{{ supplier.bank_corr_account }}</td>
+        </tr>
+        <tr>
+            <td class="label" rowspan="2">Получатель</td>
+            <td class="label">ИНН</td>
+            <td>{{ supplier.inn }}</td>
+            <td class="label">КПП</td>
+            <td>{{ supplier.kpp }}</td>
+        </tr>
+        <tr>
+            <td colspan="4">{{ supplier.name }}, р/с {{ supplier.bank_account }}</td>
+        </tr>
+    </table>
+
+    <!-- Заголовок счета -->
+    <h1>Счет на оплату № {{ invoice_number }} от {{ invoice_date }}</h1>
+
+    <!-- Информация о поставщике и покупателе -->
+    <div class="info-section">
+        <table>
+            <tr>
+                <td class="label">Поставщик<br>(Исполнитель):</td>
+                <td>
+                    <strong>{{ supplier.name }}</strong>, ИНН {{ supplier.inn }}, КПП {{ supplier.kpp }}, {{ supplier.legal_address }}
+                </td>
+            </tr>
+            <tr>
+                <td class="label">Покупатель<br>(Заказчик):</td>
+                <td>
+                    <strong>{{ customer.name }}</strong>, ИНН {{ customer.inn }}{% if customer.kpp %}, КПП {{ customer.kpp }}{% endif %}{% if customer.address %}, {{ customer.address }}{% endif %}
+                </td>
+            </tr>
+            <tr>
+                <td class="label">Основание:</td>
+                <td>Договор №{{ contract.number }} от {{ contract.date }}</td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Таблица товаров/услуг -->
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th class="num">№</th>
+                <th>Товары (работы, услуги)</th>
+                <th class="qty">Кол-во</th>
+                <th class="unit">Ед.</th>
+                <th class="price">Цена</th>
+                <th class="sum">Сумма</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td class="num">{{ loop.index }}</td>
+                <td>{{ item.name }}</td>
+                <td class="qty">{{ item.quantity }}</td>
+                <td class="unit">{{ item.unit }}</td>
+                <td class="price">{{ item.price }}</td>
+                <td class="sum">{{ item.total }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- Итоговые суммы -->
+    <div class="total-section">
+        <div class="total-row">
+            <div class="total-label">Итого:</div>
+            <div class="total-value">{{ total }}</div>
+        </div>
+        <div class="total-row">
+            <div class="total-label">В том числе НДС 22%:</div>
+            <div class="total-value">{{ vat }}</div>
+        </div>
+        <div class="total-row">
+            <div class="total-label">Всего к оплате:</div>
+            <div class="total-value"><strong>{{ total }}</strong></div>
+        </div>
+    </div>
+
+    <!-- Сумма прописью -->
+    <div class="amount-words">
+        Всего наименований {{ items_count }}, на сумму {{ total }} руб.<br>
+        <strong>{{ total_words }}</strong>
+    </div>
+
+    <!-- Условия оплаты -->
+    <div class="payment-terms">
+        Оплатить не позднее {{ payment_deadline }}<br>
+        Оплата данного счета означает согласие с условиями поставки товара.<br>
+        Уведомление об оплате обязательно, в противном случае не гарантируется наличие товара на складе.<br>
+        Товар отпускается по факту прихода денег на р/с Поставщика, самовывозом, при наличии доверенности и паспорта.
+    </div>
+
+    <!-- Подписи -->
+    <div class="signature-section">
+        <div class="signature-block">
+            <span class="signature-title">Руководитель</span>
+            <div class="signature-line"></div>
+            <span class="signature-name">{{ supplier.director_name }}</span>
+        </div>
+
+        <div class="signature-block">
+            <span class="signature-title">Бухгалтер</span>
+            <div class="signature-line"></div>
+            <span class="signature-name">{{ supplier.accountant_name }}</span>
+        </div>
+    </div>
+</body>
+</html>
