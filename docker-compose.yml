@@ -4,49 +4,72 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: payment_bot_db
-    
+
     environment:
       POSTGRES_DB: payment_bot
       POSTGRES_USER: bot_user
-      POSTGRES_PASSWORD: your_secure_password_here
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_secure_password_here}
       PGDATA: /var/lib/postgresql/data/pgdata
-    
+
     ports:
-      - "5435:5432"  # Внешний порт 5435 → внутренний 5432
-    
+      - "5435:5432"
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql  # SQL при первом запуске
-    
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+
     restart: unless-stopped
-    
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U bot_user -d payment_bot"]
       interval: 10s
       timeout: 5s
       retries: 5
-    
+
     networks:
       - bot_network
 
-  # Опционально: pgAdmin для управления БД
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: payment_bot_app
+
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      DATABASE_URL: postgresql+asyncpg://bot_user:${POSTGRES_PASSWORD:-your_secure_password_here}@postgres:5432/payment_bot
+      ADMIN_IDS: ${ADMIN_IDS:-}
+      ZCB_API_KEY: ${ZCB_API_KEY:-}
+
+    volumes:
+      - ./documents:/app/documents
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    networks:
+      - bot_network
+
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: payment_bot_pgadmin
-    
+
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@example.com
       PGADMIN_DEFAULT_PASSWORD: admin
       PGADMIN_CONFIG_SERVER_MODE: 'False'
-    
+
     ports:
       - "5050:80"
-    
+
     depends_on:
       - postgres
-    
+
     restart: unless-stopped
-    
+
     networks:
       - bot_network
 
