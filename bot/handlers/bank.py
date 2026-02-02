@@ -1,7 +1,11 @@
 # bot/handlers/bank.py
 
+from datetime import datetime, date
+
 from aiogram import Router, F, Bot
-from aiogram.types import CallbackQuery
+from aiogram.filters import Command
+from aiogram.types import Message, CallbackQuery
+from sqlalchemy import select, func
 
 from database import (
     ApplicationRepository,
@@ -10,6 +14,7 @@ from database import (
     BankRepository,
     LogRepository
 )
+from database.models import Application
 from services.notification import NotificationService
 from keyboards.bank_kb import BankKeyboards
 from middleware import RoleRequiredMiddleware
@@ -24,7 +29,7 @@ REJECTION_REASONS = {
 
 
 class BankHandlers:
-    """Хендлеры для сотрудника банка (работа через групповой чат)"""
+    """Хендлеры для сотрудника банка (работа через групповой чат + личный кабинет)"""
 
     ALLOWED_ROLES = ['bank', 'supervisor', 'admin']
 
@@ -53,22 +58,183 @@ class BankHandlers:
 
     def _setup_middleware(self):
         """Middleware для проверки роли"""
-        self.router.callback_query.middleware(
-            RoleRequiredMiddleware(self.ALLOWED_ROLES, self.user_repo)
-        )
+        role_middleware = RoleRequiredMiddleware(self.ALLOWED_ROLES, self.user_repo)
+        self.router.message.middleware(role_middleware)
+        self.router.callback_query.middleware(role_middleware)
 
     def _setup_handlers(self):
         """Регистрация обработчиков"""
+        # Панель банка (личный чат)
+        self.router.message(Command("bank"), F.chat.type == "private")(self.cmd_bank)
+        self.router.callback_query(F.data == "bankpanel:menu")(self.cb_bank_menu)
+        self.router.callback_query(F.data == "bankpanel:stats")(self.cb_bank_stats)
+        self.router.callback_query(F.data == "bankpanel:limits")(self.cb_bank_limits)
+
+        # Оценка рисков (групповой чат)
         self.router.callback_query(F.data.startswith("bank:risk:"))(self.cb_risk_assessment)
         self.router.callback_query(F.data.startswith("bank:reject:"))(self.cb_reject_reason)
         self.router.callback_query(F.data.startswith("bank:cancel_reject:"))(self.cb_cancel_reject)
 
+    # ==================== ПАНЕЛЬ БАНКА ====================
+
+    async def cmd_bank(self, message: Message, db_user):
+        """Команда /bank — панель сотрудника банка"""
+        bank = await self._get_user_bank(db_user)
+        if not bank:
+            await message.answer("❌ Вы не привязаны к банку.")
+            return
+
+        text = await self._build_bank_summary(bank)
+        await message.answer(text, reply_markup=self.kb.panel_menu(), parse_mode="HTML")
+
+    async def cb_bank_menu(self, callback: CallbackQuery, db_user):
+        """Возврат в главное меню панели"""
+        bank = await self._get_user_bank(db_user)
+        if not bank:
+            await callback.answer("Банк не найден", show_alert=True)
+            return
+
+        text = await self._build_bank_summary(bank)
+        await callback.message.edit_text(text, reply_markup=self.kb.panel_menu(), parse_mode="HTML")
+        await callback.answer()
+
+    async def cb_bank_stats(self, callback: CallbackQuery, db_user):
+        """Статистика банка"""
+        bank = await self._get_user_bank(db_user)
+        if not bank:
+            await callback.answer("Банк не найден", show_alert=True)
+            return
+
+        today = date.today()
+        stats = await self._get_bank_stats(bank.id, today)
+
+        text = (
+            f"📊 <b>Статистика «{bank.name}»</b>\n\n"
+            f"<b>Сегодня ({today.strftime('%d.%m.%Y')}):</b>\n"
+            f"  📥 Заявок на рассмотрении: <b>{stats['pending']}</b>\n"
+            f"  ✅ Одобрено: <b>{stats['approved']}</b>\n"
+            f"  ❌ Отклонено: <b>{stats['rejected']}</b>\n"
+            f"  💰 Сумма одобренных: <b>{stats['approved_sum']:,.0f}₽</b>\n\n"
+            f"<b>Всего заявок в банке:</b> {stats['total']}"
+        )
+        await callback.message.edit_text(
+            text, reply_markup=self.kb.back_to_panel(), parse_mode="HTML"
+        )
+        await callback.answer()
+
+    async def cb_bank_limits(self, callback: CallbackQuery, db_user):
+        """Лимиты банка"""
+        bank = await self._get_user_bank(db_user)
+        if not bank:
+            await callback.answer("Банк не найден", show_alert=True)
+            return
+
+        daily_remain = bank.daily_limit - bank.current_daily_used
+        weekly_remain = bank.weekly_limit - bank.current_weekly_used
+        daily_pct = (bank.current_daily_used / bank.daily_limit * 100) if bank.daily_limit else 0
+        weekly_pct = (bank.current_weekly_used / bank.weekly_limit * 100) if bank.weekly_limit else 0
+
+        text = (
+            f"📈 <b>Лимиты «{bank.name}»</b>\n\n"
+            f"<b>Дневной лимит:</b>\n"
+            f"  Лимит: {bank.daily_limit:,.0f}₽\n"
+            f"  Использовано: {bank.current_daily_used:,.0f}₽ ({daily_pct:.0f}%)\n"
+            f"  Остаток: <b>{daily_remain:,.0f}₽</b>\n\n"
+            f"<b>Недельный лимит:</b>\n"
+            f"  Лимит: {bank.weekly_limit:,.0f}₽\n"
+            f"  Использовано: {bank.current_weekly_used:,.0f}₽ ({weekly_pct:.0f}%)\n"
+            f"  Остаток: <b>{weekly_remain:,.0f}₽</b>\n\n"
+            f"📌 Приоритет: {bank.priority}\n"
+            f"{'✅ Принимает заявки' if bank.is_available else '⛔ Приём приостановлен'}"
+        )
+        await callback.message.edit_text(
+            text, reply_markup=self.kb.back_to_panel(), parse_mode="HTML"
+        )
+        await callback.answer()
+
     # ==================== HELPERS ====================
 
+    async def _get_user_bank(self, db_user):
+        """Получить банк пользователя"""
+        if db_user.bank_id:
+            return await self.bank_repo.get_by_id(db_user.bank_id)
+        # Для supervisor/admin — показать первый активный банк
+        if db_user.role in ('supervisor', 'admin'):
+            banks = await self.bank_repo.get_active()
+            return banks[0] if banks else None
+        return None
+
+    async def _build_bank_summary(self, bank) -> str:
+        """Сводка банка для главного меню"""
+        today = date.today()
+        stats = await self._get_bank_stats(bank.id, today)
+        daily_remain = bank.daily_limit - bank.current_daily_used
+
+        return (
+            f"🏦 <b>Панель банка «{bank.name}»</b>\n\n"
+            f"📥 Заявок на рассмотрении: <b>{stats['pending']}</b>\n"
+            f"💰 Дневной остаток: <b>{daily_remain:,.0f}₽</b> "
+            f"из {bank.daily_limit:,.0f}₽\n"
+            f"{'✅ Принимает заявки' if bank.is_available else '⛔ Приём приостановлен'}"
+        )
+
+    async def _get_bank_stats(self, bank_id: int, target_date: date) -> dict:
+        """Получить статистику банка за день"""
+        async with self.application_repo.session_maker() as session:
+            # Заявки на рассмотрении
+            pending_result = await session.execute(
+                select(func.count()).select_from(Application).where(
+                    Application.bank_id == bank_id,
+                    Application.status == 'bank_review'
+                )
+            )
+            pending = pending_result.scalar_one()
+
+            # Одобрено сегодня
+            approved_result = await session.execute(
+                select(
+                    func.count(),
+                    func.coalesce(func.sum(Application.amount), 0)
+                ).select_from(Application).where(
+                    Application.bank_id == bank_id,
+                    Application.status.in_(['approved', 'supervisor_review',
+                                            'awaiting_contract_details',
+                                            'invoice_generated', 'paid']),
+                    func.date(Application.sent_to_bank_at) == target_date
+                )
+            )
+            approved_row = approved_result.one()
+            approved = approved_row[0]
+            approved_sum = float(approved_row[1])
+
+            # Отклонено сегодня
+            rejected_result = await session.execute(
+                select(func.count()).select_from(Application).where(
+                    Application.bank_id == bank_id,
+                    Application.status == 'rejected',
+                    func.date(Application.updated_at) == target_date
+                )
+            )
+            rejected = rejected_result.scalar_one()
+
+            # Всего заявок банка
+            total_result = await session.execute(
+                select(func.count()).select_from(Application).where(
+                    Application.bank_id == bank_id
+                )
+            )
+            total = total_result.scalar_one()
+
+        return {
+            'pending': pending,
+            'approved': approved,
+            'approved_sum': approved_sum,
+            'rejected': rejected,
+            'total': total,
+        }
+
     async def _validate_bank_access(self, callback: CallbackQuery, db_user) -> bool:
-        """Проверяет, что сотрудник банка имеет доступ к группе.
-        Supervisor и admin пропускаются без проверки.
-        Возвращает True если доступ разрешён."""
+        """Проверяет, что сотрудник банка имеет доступ к группе."""
         if db_user.role in ('supervisor', 'admin'):
             return True
 
@@ -83,7 +249,7 @@ class BankHandlers:
 
         return True
 
-    # ==================== CALLBACK HANDLERS ====================
+    # ==================== CALLBACK HANDLERS (групповой чат) ====================
 
     async def cb_risk_assessment(self, callback: CallbackQuery, db_user):
         """Оценка риска"""
@@ -100,7 +266,6 @@ class BankHandlers:
             return
 
         if risk_level == "high_risk":
-            # Показываем выбор причины отклонения
             await callback.message.edit_text(
                 f"❌ <b>Отклонение заявки</b>\n\n"
                 f"📋 {app.external_id}\n"
@@ -184,15 +349,12 @@ class BankHandlers:
 
         reason = REJECTION_REASONS.get(reason_code, reason_code)
 
-        # Отклоняем этап банка
         pending_approval = await self.approval_repo.get_by_role(app_id, 'bank')
         if pending_approval:
             await self.approval_repo.reject(pending_approval.id, db_user.id, reason)
 
-        # Обновляем статус заявки
         await self.application_repo.update_status(app_id, 'rejected')
 
-        # Логируем
         await self.log_repo.create_log(
             action='bank_rejected',
             application_id=app_id,
@@ -228,7 +390,6 @@ class BankHandlers:
             await callback.answer("Заявка не найдена", show_alert=True)
             return
 
-        # Возвращаем исходное уведомление с кнопками
         notification_text = (
             f"📥 <b>Заявка на оценку риска</b>\n\n"
             f"📋 {app.external_id}\n"
