@@ -79,12 +79,6 @@ class Company(Base):
     director_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     accountant_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # Банковские реквизиты компании
-    bank_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    bank_bik: Mapped[str | None] = mapped_column(String(9), nullable=True)
-    bank_account: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    bank_corr_account: Mapped[str | None] = mapped_column(String(20), nullable=True)
-
     daily_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     weekly_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     monthly_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
@@ -124,8 +118,10 @@ class Bank(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    bik: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    corr_account: Mapped[str | None] = mapped_column(String(20), nullable=True)
     chat_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, nullable=True, index=True)
-    
+
     daily_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     weekly_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
     
@@ -173,6 +169,7 @@ class CompanyBank(Base):
         ForeignKey('banks.id', ondelete='CASCADE'),
         nullable=False
     )
+    account_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_preferred: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Связи
@@ -186,7 +183,7 @@ class CompanyBank(Base):
     )
 
     def __repr__(self):
-        return f"<CompanyBank(company_id={self.company_id}, bank_id={self.bank_id})>"
+        return f"<CompanyBank(company_id={self.company_id}, bank_id={self.bank_id}, account={self.account_number})>"
 
 
 # 5. Заявки
