@@ -52,7 +52,8 @@ class PaymentBot:
         )
         self.document_service = DocumentService(
             document_repo=self.document_repo,
-            application_repo=self.application_repo
+            application_repo=self.application_repo,
+            company_repo=self.company_repo
         )
         self.bot_logic = LogicService(
             db_manager=self.db_manager,

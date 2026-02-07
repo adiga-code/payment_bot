@@ -172,3 +172,106 @@ class CompanyRepository(BaseRepository[Company]):
             )
             bank_id = result.scalar_one_or_none()
             return bank_id
+
+    # ==================== COMPANY-BANK RELATIONSHIPS ====================
+
+    async def get_company_banks(self, company_id: int) -> List[CompanyBank]:
+        """Получить все связи компании с банками (с загруженными банками)"""
+        from sqlalchemy.orm import selectinload
+        async with self.session_maker() as session:
+            result = await session.execute(
+                select(CompanyBank)
+                .options(selectinload(CompanyBank.bank))
+                .where(CompanyBank.company_id == company_id)
+            )
+            return list(result.scalars().all())
+
+    async def get_company_bank_by_id(self, company_bank_id: int) -> Optional[CompanyBank]:
+        """Получить связь компании с банком по ID"""
+        from sqlalchemy.orm import selectinload
+        async with self.session_maker() as session:
+            result = await session.execute(
+                select(CompanyBank)
+                .options(selectinload(CompanyBank.bank))
+                .where(CompanyBank.id == company_bank_id)
+            )
+            return result.scalar_one_or_none()
+
+    async def create_company_bank(
+        self,
+        company_id: int,
+        bank_id: int,
+        account_number: str = None,
+        is_preferred: bool = False
+    ) -> CompanyBank:
+        """Создать связь компании с банком"""
+        async with self.session_maker() as session:
+            company_bank = CompanyBank(
+                company_id=company_id,
+                bank_id=bank_id,
+                account_number=account_number,
+                is_preferred=is_preferred
+            )
+            session.add(company_bank)
+            await session.commit()
+            await session.refresh(company_bank)
+            return company_bank
+
+    async def update_company_bank(self, company_bank_id: int, **kwargs) -> bool:
+        """Обновить связь компании с банком"""
+        from sqlalchemy import update
+        async with self.session_maker() as session:
+            stmt = (
+                update(CompanyBank)
+                .where(CompanyBank.id == company_bank_id)
+                .values(**kwargs)
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount > 0
+
+    async def delete_company_bank(self, company_bank_id: int) -> bool:
+        """Удалить связь компании с банком"""
+        from sqlalchemy import delete
+        async with self.session_maker() as session:
+            stmt = delete(CompanyBank).where(CompanyBank.id == company_bank_id)
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount > 0
+
+    async def set_preferred_bank(self, company_id: int, company_bank_id: int) -> bool:
+        """Установить банк как предпочтительный для компании"""
+        from sqlalchemy import update
+        async with self.session_maker() as session:
+            # Сначала сбросить все is_preferred для компании
+            await session.execute(
+                update(CompanyBank)
+                .where(CompanyBank.company_id == company_id)
+                .values(is_preferred=False)
+            )
+            # Установить новый предпочтительный
+            await session.execute(
+                update(CompanyBank)
+                .where(CompanyBank.id == company_bank_id)
+                .values(is_preferred=True)
+            )
+            await session.commit()
+            return True
+
+    async def get_company_bank_for_invoice(
+        self,
+        company_id: int,
+        bank_id: int
+    ) -> Optional[CompanyBank]:
+        """Получить связь компании с банком для генерации счёта"""
+        from sqlalchemy.orm import selectinload
+        async with self.session_maker() as session:
+            result = await session.execute(
+                select(CompanyBank)
+                .options(selectinload(CompanyBank.bank))
+                .where(
+                    CompanyBank.company_id == company_id,
+                    CompanyBank.bank_id == bank_id
+                )
+            )
+            return result.scalar_one_or_none()

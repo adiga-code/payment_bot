@@ -270,21 +270,30 @@ class ManagerHandlers:
         # Сохраняем выбранную компанию
         await self.application_repo.assign_company(app_id, company_id)
 
-        # Получаем доступные банки
-        banks = await self.bank_repo.get_all()
+        company = await self.company_repo.get_by_id(company_id)
+
+        # Получаем банки, где у компании есть счета
+        company_banks = await self.bank_repo.get_for_company(company_id)
+
+        # Фильтруем по доступному лимиту
         available_banks = [
-            b for b in banks
-            if b.is_active and b.is_available and (b.daily_limit - b.current_daily_used) >= app.amount
+            b for b in company_banks
+            if (b.daily_limit - b.current_daily_used) >= app.amount
         ]
 
         if not available_banks:
-            await callback.answer(
-                "Нет доступных банков с достаточным лимитом!",
-                show_alert=True
-            )
+            # Проверяем, есть ли вообще счета у компании
+            if not company_banks:
+                await callback.answer(
+                    "У компании нет привязанных банковских счетов!",
+                    show_alert=True
+                )
+            else:
+                await callback.answer(
+                    "Нет банков с достаточным лимитом!",
+                    show_alert=True
+                )
             return
-
-        company = await self.company_repo.get_by_id(company_id)
 
         await callback.message.edit_text(
             f"📋 <b>Заявка {app.external_id}</b>\n"

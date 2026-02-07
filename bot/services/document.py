@@ -8,7 +8,7 @@ from decimal import Decimal
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 
-from database import DocumentRepository, ApplicationRepository
+from database import DocumentRepository, ApplicationRepository, CompanyRepository
 from utils.amount_words import amount_to_words
 
 logger = logging.getLogger(__name__)
@@ -38,9 +38,15 @@ def _format_date_ru(dt: datetime) -> str:
 class DocumentService:
     """Сервис генерации документов (счетов на оплату в PDF)"""
 
-    def __init__(self, document_repo: DocumentRepository, application_repo: ApplicationRepository):
+    def __init__(
+        self,
+        document_repo: DocumentRepository,
+        application_repo: ApplicationRepository,
+        company_repo: CompanyRepository = None
+    ):
         self.document_repo = document_repo
         self.application_repo = application_repo
+        self.company_repo = company_repo
         os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
         # Jinja2 окружение
@@ -76,15 +82,24 @@ class DocumentService:
 
         # Данные компании-поставщика
         co = app.company
+        bank = app.bank
+
+        # Получаем номер счёта компании в этом банке
+        account_number = ""
+        if co and bank and self.company_repo:
+            company_bank = await self.company_repo.get_company_bank_for_invoice(co.id, bank.id)
+            if company_bank:
+                account_number = company_bank.account_number or ""
+
         supplier = {
             'name': co.name if co else "—",
             'inn': co.inn if co else "—",
             'kpp': co.kpp if co and co.kpp else "",
             'legal_address': co.legal_address if co and co.legal_address else "",
-            'bank_name': co.bank_name if co and co.bank_name else "",
-            'bank_bik': co.bank_bik if co and co.bank_bik else "",
-            'bank_account': co.bank_account if co and co.bank_account else "",
-            'bank_corr_account': co.bank_corr_account if co and co.bank_corr_account else "",
+            'bank_name': bank.name if bank else "",
+            'bank_bik': bank.bik if bank and bank.bik else "",
+            'bank_account': account_number,
+            'bank_corr_account': bank.corr_account if bank and bank.corr_account else "",
             'director_name': co.director_name if co and co.director_name else "",
             'accountant_name': co.accountant_name if co and co.accountant_name else "",
         }

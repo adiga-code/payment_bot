@@ -34,9 +34,13 @@ class AdminStates(StatesGroup):
     editing_company_name = State()
     editing_company_inn = State()
     editing_company_limit = State()
+    waiting_company_bank_account = State()  # Ввод номера счёта при привязке банка
+    editing_company_bank_account = State()  # Редактирование номера счёта
 
     # Банки
     waiting_bank_name = State()
+    waiting_bank_bik = State()
+    waiting_bank_corr_account = State()
     waiting_bank_daily_limit = State()
     waiting_group_code = State()  # Ожидание кода подтверждения группы
     editing_bank_name = State()
@@ -115,6 +119,8 @@ class AdminHandlers:
         self.router.message(AdminStates.editing_company_name)(self.process_edit_company_name)
         self.router.message(AdminStates.editing_company_inn)(self.process_edit_company_inn)
         self.router.message(AdminStates.editing_company_limit)(self.process_edit_company_limit)
+        self.router.message(AdminStates.waiting_company_bank_account)(self.process_company_bank_account)
+        self.router.message(AdminStates.editing_company_bank_account)(self.process_edit_company_bank_account)
 
         # ===== БАНКИ =====
         self.router.callback_query(F.data == "admin:banks")(self.cb_banks_menu)
@@ -125,6 +131,8 @@ class AdminHandlers:
 
         # FSM: банки
         self.router.message(AdminStates.waiting_bank_name)(self.process_bank_name)
+        self.router.message(AdminStates.waiting_bank_bik)(self.process_bank_bik)
+        self.router.message(AdminStates.waiting_bank_corr_account)(self.process_bank_corr_account)
         self.router.message(AdminStates.waiting_bank_daily_limit)(self.process_bank_daily_limit)
         self.router.message(AdminStates.waiting_group_code)(self.process_group_code)
         self.router.message(AdminStates.editing_bank_name)(self.process_edit_bank_name)
@@ -782,6 +790,28 @@ class AdminHandlers:
             )
             await callback.answer()
 
+        # Банковские счета
+        elif action == "banks":
+            await self.cb_company_banks(callback, state, db_user)
+
+        elif action == "add_bank":
+            await self.cb_company_add_bank(callback, state, db_user)
+
+        elif action == "select_bank":
+            await self.cb_company_select_bank(callback, state, db_user)
+
+        elif action == "bank":
+            await self.cb_company_bank_view(callback, state, db_user)
+
+        elif action == "edit_account":
+            await self.cb_company_edit_account(callback, state, db_user)
+
+        elif action == "set_preferred":
+            await self.cb_company_set_preferred(callback, state, db_user)
+
+        elif action == "unlink_bank":
+            await self.cb_company_unlink_bank(callback, state, db_user)
+
         # Изменение конкретного лимита
         elif action == "limit":
             limit_type = parts[1]
@@ -910,6 +940,231 @@ class AdminHandlers:
             parse_mode="HTML"
         )
 
+    # ==================== БАНКОВСКИЕ СЧЕТА КОМПАНИИ ====================
+
+    async def cb_company_banks(self, callback: CallbackQuery, state: FSMContext, db_user):
+        """Список банковских счетов компании"""
+        company_id = int(callback.data.split(":")[-1])
+        company = await self.company_repo.get_by_id(company_id)
+
+        if not company:
+            await callback.answer("Компания не найдена", show_alert=True)
+            return
+
+        company_banks = await self.company_repo.get_company_banks(company_id)
+
+        await callback.message.edit_text(
+            f"🏢 <b>{company.name}</b>\n\n"
+            f"🏦 <b>Банковские счета</b>\n\n"
+            f"Всего счетов: {len(company_banks)}\n"
+            f"⭐ = основной счёт",
+            reply_markup=self.kb.company_banks_list(company_id, company_banks),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+
+    async def cb_company_add_bank(self, callback: CallbackQuery, state: FSMContext, db_user):
+        """Показать список банков для привязки"""
+        company_id = int(callback.data.split(":")[-1])
+
+        # Получить все банки
+        all_banks = await self.bank_repo.get_all()
+
+        # Получить ID уже привязанных банков
+        linked_bank_ids = await self.company_repo.get_banks(company_id)
+
+        # Отфильтровать только непривязанные банки
+        available_banks = [b for b in all_banks if b.id not in linked_bank_ids]
+
+        if not available_banks:
+            await callback.answer("Все банки уже привязаны к компании!", show_alert=True)
+            return
+
+        await callback.message.edit_text(
+            "🏦 <b>Выберите банк для привязки:</b>",
+            reply_markup=self.kb.select_bank_for_company(company_id, available_banks),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+
+    async def cb_company_select_bank(self, callback: CallbackQuery, state: FSMContext, db_user):
+        """Банк выбран, запросить номер счёта"""
+        parts = callback.data.split(":")
+        bank_id = int(parts[-2])
+        company_id = int(parts[-1])
+
+        bank = await self.bank_repo.get_by_id(bank_id)
+
+        await state.set_state(AdminStates.waiting_company_bank_account)
+        await state.update_data(
+            linking_company_id=company_id,
+            linking_bank_id=bank_id,
+            linking_bank_name=bank.name
+        )
+
+        await callback.message.edit_text(
+            f"🏦 <b>{bank.name}</b>\n\n"
+            f"Введите номер расчётного счёта (20 цифр):\n"
+            f"<i>Например: 40702810500000012345</i>",
+            reply_markup=self.kb.cancel_input(),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+
+    async def process_company_bank_account(self, message: Message, state: FSMContext, db_user):
+        """Обработка ввода номера счёта при привязке банка"""
+        account = message.text.strip().replace(" ", "")
+
+        if not account.isdigit() or len(account) != 20:
+            await message.answer(
+                "❌ Номер счёта должен содержать 20 цифр.",
+                reply_markup=self.kb.cancel_input()
+            )
+            return
+
+        data = await state.get_data()
+        company_id = data['linking_company_id']
+        bank_id = data['linking_bank_id']
+        bank_name = data['linking_bank_name']
+
+        await state.clear()
+
+        # Проверить, есть ли уже счета у компании
+        existing_banks = await self.company_repo.get_company_banks(company_id)
+        is_first = len(existing_banks) == 0
+
+        # Создать связь
+        await self.company_repo.create_company_bank(
+            company_id=company_id,
+            bank_id=bank_id,
+            account_number=account,
+            is_preferred=is_first  # Первый счёт автоматически основной
+        )
+
+        await message.answer(
+            f"✅ <b>Счёт добавлен!</b>\n\n"
+            f"🏦 {bank_name}\n"
+            f"💳 Счёт: <code>{account}</code>"
+            + ("\n⭐ Установлен как основной" if is_first else ""),
+            reply_markup=self.kb.back_to_menu(),
+            parse_mode="HTML"
+        )
+
+    async def cb_company_bank_view(self, callback: CallbackQuery, state: FSMContext, db_user):
+        """Просмотр конкретного счёта компании"""
+        parts = callback.data.split(":")
+        company_bank_id = int(parts[-2])
+        company_id = int(parts[-1])
+
+        company_bank = await self.company_repo.get_company_bank_by_id(company_bank_id)
+
+        if not company_bank:
+            await callback.answer("Счёт не найден", show_alert=True)
+            return
+
+        bank = company_bank.bank
+        preferred_text = "⭐ Основной счёт" if company_bank.is_preferred else ""
+
+        await callback.message.edit_text(
+            f"🏦 <b>{bank.name}</b>\n\n"
+            f"🔢 БИК: <code>{bank.bik or '—'}</code>\n"
+            f"💳 Корр. счёт: <code>{bank.corr_account or '—'}</code>\n"
+            f"💳 Р/счёт: <code>{company_bank.account_number or '—'}</code>\n"
+            f"{preferred_text}",
+            reply_markup=self.kb.company_bank_actions(company_bank_id, company_id, company_bank.is_preferred),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+
+    async def cb_company_edit_account(self, callback: CallbackQuery, state: FSMContext, db_user):
+        """Редактирование номера счёта"""
+        parts = callback.data.split(":")
+        company_bank_id = int(parts[-2])
+        company_id = int(parts[-1])
+
+        await state.set_state(AdminStates.editing_company_bank_account)
+        await state.update_data(
+            editing_company_bank_id=company_bank_id,
+            editing_company_id=company_id
+        )
+
+        await callback.message.edit_text(
+            "✏️ Введите новый номер счёта (20 цифр):",
+            reply_markup=self.kb.cancel_input()
+        )
+        await callback.answer()
+
+    async def process_edit_company_bank_account(self, message: Message, state: FSMContext, db_user):
+        """Обработка нового номера счёта"""
+        account = message.text.strip().replace(" ", "")
+
+        if not account.isdigit() or len(account) != 20:
+            await message.answer(
+                "❌ Номер счёта должен содержать 20 цифр.",
+                reply_markup=self.kb.cancel_input()
+            )
+            return
+
+        data = await state.get_data()
+        company_bank_id = data['editing_company_bank_id']
+
+        await state.clear()
+
+        await self.company_repo.update_company_bank(company_bank_id, account_number=account)
+
+        await message.answer(
+            f"✅ Номер счёта изменён: <code>{account}</code>",
+            reply_markup=self.kb.back_to_menu(),
+            parse_mode="HTML"
+        )
+
+    async def cb_company_set_preferred(self, callback: CallbackQuery, state: FSMContext, db_user):
+        """Установить счёт как основной"""
+        parts = callback.data.split(":")
+        company_bank_id = int(parts[-2])
+        company_id = int(parts[-1])
+
+        await self.company_repo.set_preferred_bank(company_id, company_bank_id)
+
+        await callback.answer("✅ Счёт установлен как основной", show_alert=True)
+
+        # Обновить отображение
+        company_bank = await self.company_repo.get_company_bank_by_id(company_bank_id)
+        bank = company_bank.bank
+
+        await callback.message.edit_text(
+            f"🏦 <b>{bank.name}</b>\n\n"
+            f"🔢 БИК: <code>{bank.bik or '—'}</code>\n"
+            f"💳 Корр. счёт: <code>{bank.corr_account or '—'}</code>\n"
+            f"💳 Р/счёт: <code>{company_bank.account_number or '—'}</code>\n"
+            f"⭐ Основной счёт",
+            reply_markup=self.kb.company_bank_actions(company_bank_id, company_id, True),
+            parse_mode="HTML"
+        )
+
+    async def cb_company_unlink_bank(self, callback: CallbackQuery, state: FSMContext, db_user):
+        """Отвязать банк от компании"""
+        parts = callback.data.split(":")
+        company_bank_id = int(parts[-2])
+        company_id = int(parts[-1])
+
+        await self.company_repo.delete_company_bank(company_bank_id)
+
+        await callback.answer("✅ Счёт удалён", show_alert=True)
+
+        # Вернуться к списку счетов
+        company_banks = await self.company_repo.get_company_banks(company_id)
+        company = await self.company_repo.get_by_id(company_id)
+
+        await callback.message.edit_text(
+            f"🏢 <b>{company.name}</b>\n\n"
+            f"🏦 <b>Банковские счета</b>\n\n"
+            f"Всего счетов: {len(company_banks)}\n"
+            f"⭐ = основной счёт",
+            reply_markup=self.kb.company_banks_list(company_id, company_banks),
+            parse_mode="HTML"
+        )
+
     # ==================== БАНКИ ====================
 
     async def cb_banks_menu(self, callback: CallbackQuery, db_user):
@@ -970,10 +1225,46 @@ class AdminHandlers:
             return
 
         await state.update_data(bank_name=name)
-        await state.set_state(AdminStates.waiting_bank_daily_limit)
+        await state.set_state(AdminStates.waiting_bank_bik)
 
         await message.answer(
             f"✅ Название: <b>{name}</b>\n\n"
+            "Введите БИК банка (9 цифр):\n"
+            "<i>Например: 044525225</i>",
+            reply_markup=self.kb.cancel_input(),
+            parse_mode="HTML"
+        )
+
+    async def process_bank_bik(self, message: Message, state: FSMContext, db_user):
+        """Обработка БИК банка"""
+        bik = message.text.strip().replace(" ", "")
+        if not bik.isdigit() or len(bik) != 9:
+            await message.answer("❌ БИК должен содержать 9 цифр.")
+            return
+
+        await state.update_data(bank_bik=bik)
+        await state.set_state(AdminStates.waiting_bank_corr_account)
+
+        await message.answer(
+            f"✅ БИК: <b>{bik}</b>\n\n"
+            "Введите корреспондентский счёт банка (20 цифр):\n"
+            "<i>Например: 30101810400000000225</i>",
+            reply_markup=self.kb.cancel_input(),
+            parse_mode="HTML"
+        )
+
+    async def process_bank_corr_account(self, message: Message, state: FSMContext, db_user):
+        """Обработка корр. счёта банка"""
+        corr = message.text.strip().replace(" ", "")
+        if not corr.isdigit() or len(corr) != 20:
+            await message.answer("❌ Корр. счёт должен содержать 20 цифр.")
+            return
+
+        await state.update_data(bank_corr_account=corr)
+        await state.set_state(AdminStates.waiting_bank_daily_limit)
+
+        await message.answer(
+            f"✅ Корр. счёт: <b>{corr}</b>\n\n"
             "Введите дневной лимит (в рублях):\n"
             "<i>Например: 10000000</i>",
             reply_markup=self.kb.cancel_input(),
@@ -996,6 +1287,8 @@ class AdminHandlers:
         # Создаём банк БЕЗ chat_id
         bank = await self.bank_repo.create(
             name=data['bank_name'],
+            bik=data.get('bank_bik'),
+            corr_account=data.get('bank_corr_account'),
             daily_limit=limit,
             weekly_limit=limit * 5
         )
@@ -1003,6 +1296,8 @@ class AdminHandlers:
         await message.answer(
             f"✅ <b>Банк создан!</b>\n\n"
             f"🏦 {bank.name}\n"
+            f"🔢 БИК: {bank.bik or '—'}\n"
+            f"💳 Корр. счёт: {bank.corr_account or '—'}\n"
             f"💰 Дневной лимит: {bank.daily_limit:,.0f}₽\n\n"
             f"💬 Группа не привязана.\n"
             f"Для привязки группы перейдите в настройки банка.",
@@ -1036,6 +1331,8 @@ class AdminHandlers:
 
             await callback.message.edit_text(
                 f"🏦 <b>{bank.name}</b>\n\n"
+                f"🔢 БИК: {bank.bik or '—'}\n"
+                f"💳 Корр. счёт: {bank.corr_account or '—'}\n\n"
                 f"{chat_info}\n"
                 f"👥 Сотрудников: {emp_count}\n"
                 f"⚡ Приоритет: {bank.priority}\n"

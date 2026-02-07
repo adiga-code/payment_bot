@@ -249,6 +249,9 @@ class AdminKeyboards:
             InlineKeyboardButton(text="💰 Лимиты", callback_data=f"admin:company:limits:{company_id}")
         )
         builder.row(
+            InlineKeyboardButton(text="🏦 Банковские счета", callback_data=f"admin:company:banks:{company_id}")
+        )
+        builder.row(
             InlineKeyboardButton(text="🔄 Сбросить использование", callback_data=f"admin:company:reset:{company_id}")
         )
 
@@ -282,6 +285,74 @@ class AdminKeyboards:
         )
         builder.row(
             InlineKeyboardButton(text="🔙 Назад", callback_data=f"admin:company:{company_id}")
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def company_banks_list(company_id: int, company_banks: list) -> InlineKeyboardMarkup:
+        """Список банковских счетов компании"""
+        builder = InlineKeyboardBuilder()
+
+        for cb in company_banks:
+            bank_name = cb.bank.name if cb.bank else "—"
+            account = cb.account_number or "—"
+            preferred = "⭐ " if cb.is_preferred else ""
+            builder.row(
+                InlineKeyboardButton(
+                    text=f"{preferred}{bank_name}: {account}",
+                    callback_data=f"admin:company:bank:{cb.id}:{company_id}"
+                )
+            )
+
+        builder.row(
+            InlineKeyboardButton(text="➕ Добавить счёт", callback_data=f"admin:company:add_bank:{company_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="🔙 Назад", callback_data=f"admin:company:{company_id}")
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def select_bank_for_company(company_id: int, banks: list) -> InlineKeyboardMarkup:
+        """Выбор банка для привязки к компании"""
+        builder = InlineKeyboardBuilder()
+
+        for bank in banks:
+            builder.row(
+                InlineKeyboardButton(
+                    text=f"🏦 {bank.name}",
+                    callback_data=f"admin:company:select_bank:{bank.id}:{company_id}"
+                )
+            )
+
+        builder.row(
+            InlineKeyboardButton(text="🔙 Назад", callback_data=f"admin:company:banks:{company_id}")
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def company_bank_actions(company_bank_id: int, company_id: int, is_preferred: bool) -> InlineKeyboardMarkup:
+        """Действия со счётом компании"""
+        builder = InlineKeyboardBuilder()
+
+        builder.row(
+            InlineKeyboardButton(text="✏️ Изменить номер счёта", callback_data=f"admin:company:edit_account:{company_bank_id}:{company_id}")
+        )
+
+        if is_preferred:
+            builder.row(
+                InlineKeyboardButton(text="⭐ Основной счёт", callback_data="noop")
+            )
+        else:
+            builder.row(
+                InlineKeyboardButton(text="☆ Сделать основным", callback_data=f"admin:company:set_preferred:{company_bank_id}:{company_id}")
+            )
+
+        builder.row(
+            InlineKeyboardButton(text="🗑️ Отвязать счёт", callback_data=f"admin:company:unlink_bank:{company_bank_id}:{company_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="🔙 Назад", callback_data=f"admin:company:banks:{company_id}")
         )
         return builder.as_markup()
 
