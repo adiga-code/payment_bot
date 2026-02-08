@@ -242,9 +242,19 @@ class Application(Base):
     bank_response_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     invoice_generated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    invoice_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    client_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    payment_received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
-    
+
+    # Выдача
+    payout_format: Mapped[str | None] = mapped_column(String(10), nullable=True)  # T+1, T+2, ...
+    payout_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Отмена
+    cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Дополнительно
     source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

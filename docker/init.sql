@@ -125,8 +125,18 @@ CREATE TABLE applications (
     bank_response_at TIMESTAMP,
     approved_at TIMESTAMP,
     invoice_generated_at TIMESTAMP,
+    invoice_sent_at TIMESTAMP,
+    client_confirmed_at TIMESTAMP,
+    payment_received_at TIMESTAMP,
     paid_at TIMESTAMP,
     updated_at TIMESTAMP DEFAULT NOW(),
+
+    -- Выдача
+    payout_format VARCHAR(10),
+    payout_date TIMESTAMP,
+
+    -- Отмена
+    cancellation_reason TEXT,
 
     -- Дополнительно
     source VARCHAR(100),

@@ -192,3 +192,22 @@ class ManagerKeyboards:
         )
 
         return builder.as_markup()
+
+    @staticmethod
+    def payout_format(app_id: int) -> InlineKeyboardMarkup:
+        """Выбор формата выдачи T+N"""
+        builder = InlineKeyboardBuilder()
+
+        builder.row(
+            InlineKeyboardButton(text="T+1", callback_data=f"mgr:payout:1:{app_id}"),
+            InlineKeyboardButton(text="T+2", callback_data=f"mgr:payout:2:{app_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="T+3", callback_data=f"mgr:payout:3:{app_id}"),
+            InlineKeyboardButton(text="T+4", callback_data=f"mgr:payout:4:{app_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="T+5", callback_data=f"mgr:payout:5:{app_id}")
+        )
+
+        return builder.as_markup()

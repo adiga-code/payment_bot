@@ -311,3 +311,75 @@ class ApplicationRepository(BaseRepository[Application]):
             result = await session.execute(stmt)
             await session.commit()
             return result.rowcount
+
+    # ==================== PAYMENT CONFIRMATION FLOW ====================
+
+    async def mark_invoice_sent(self, app_id: int) -> bool:
+        """Отметить что счёт отправлен клиенту"""
+        return await self.update_by_id(
+            app_id,
+            status='invoice_sent',
+            invoice_sent_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+
+    async def mark_client_confirmed(self, app_id: int) -> bool:
+        """Отметить что клиент подтвердил оплату"""
+        return await self.update_by_id(
+            app_id,
+            status='client_confirmed',
+            client_confirmed_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+
+    async def mark_payment_received(self, app_id: int) -> bool:
+        """Отметить что бухгалтер подтвердил получение средств"""
+        return await self.update_by_id(
+            app_id,
+            status='payment_received',
+            payment_received_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+
+    async def update_payout(
+        self,
+        app_id: int,
+        payout_format: str,
+        payout_date: datetime
+    ) -> bool:
+        """Установить формат и дату выдачи"""
+        return await self.update_by_id(
+            app_id,
+            payout_format=payout_format,
+            payout_date=payout_date,
+            updated_at=datetime.utcnow()
+        )
+
+    async def cancel_application(self, app_id: int, reason: str) -> bool:
+        """Отменить заявку с причиной"""
+        return await self.update_by_id(
+            app_id,
+            status='cancelled',
+            cancellation_reason=reason,
+            updated_at=datetime.utcnow()
+        )
+
+    async def get_pending_client_payment(self) -> List[Application]:
+        """Получить заявки, ожидающие подтверждения оплаты от клиента (invoice_sent)"""
+        async with self.session_maker() as session:
+            result = await session.execute(
+                select(Application)
+                .where(Application.status == 'invoice_sent')
+                .order_by(Application.invoice_sent_at.asc())
+            )
+            return list(result.scalars().all())
+
+    async def get_pending_accountant_confirmation(self) -> List[Application]:
+        """Получить заявки, ожидающие подтверждения от бухгалтера (client_confirmed)"""
+        async with self.session_maker() as session:
+            result = await session.execute(
+                select(Application)
+                .where(Application.status == 'client_confirmed')
+                .order_by(Application.client_confirmed_at.asc())
+            )
+            return list(result.scalars().all())

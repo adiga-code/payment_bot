@@ -6,7 +6,9 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from typing import Optional
+from datetime import datetime
 from services.honest_business_api import format_payer_check
+from utils.business_days import get_payout_date, format_payout_date
 
 from database import (
     ApplicationRepository,
@@ -92,6 +94,9 @@ class ManagerHandlers:
         # Выбор компании и банка
         self.router.callback_query(F.data.startswith("mgr:company:"))(self.cb_select_company)
         self.router.callback_query(F.data.startswith("mgr:bank:"))(self.cb_select_bank)
+
+        # Выбор формата выдачи T+N
+        self.router.callback_query(F.data.startswith("mgr:payout:"))(self.cb_select_payout)
 
         # Ввод причины отклонения (для "другая причина")
         self.router.message(RejectReasonState.waiting_for_reason)(self.process_reject_reason)
@@ -499,6 +504,56 @@ class ManagerHandlers:
 
         if self.notification_service:
             await self.notification_service.notify_supervisors_escalation(app, "менеджер")
+
+    async def cb_select_payout(self, callback: CallbackQuery, db_user):
+        """Выбор формата выдачи T+N после подтверждения оплаты"""
+        # Формат: mgr:payout:{days}:{app_id}
+        parts = callback.data.split(":")
+        payout_days = int(parts[2])
+        app_id = int(parts[3])
+
+        app = await self.application_repo.get_by_id(app_id)
+        if not app:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+
+        # Вычисляем дату выдачи
+        payout_format = f"T+{payout_days}"
+        payout_date = get_payout_date(payout_format, datetime.utcnow())
+
+        # Обновляем заявку
+        await self.application_repo.update_payout(
+            app_id=app_id,
+            payout_format=payout_format,
+            payout_date=payout_date
+        )
+        await self.application_repo.update_status(app_id, 'scheduled_payout')
+
+        # Логируем
+        await self.log_repo.create_log(
+            action='payout_scheduled',
+            application_id=app_id,
+            user_id=db_user.id,
+            details={'payout_format': payout_format, 'payout_date': payout_date.isoformat()}
+        )
+
+        # Форматируем дату для отображения
+        payout_date_str = format_payout_date(payout_date)
+
+        await callback.message.edit_text(
+            f"✅ <b>Дата выдачи назначена!</b>\n\n"
+            f"📋 {app.external_id}\n"
+            f"💰 {app.amount:,.0f}₽\n"
+            f"📅 Формат: {payout_format}\n"
+            f"📆 Дата выдачи: {payout_date_str}",
+            reply_markup=self.kb.main_menu(),
+            parse_mode="HTML"
+        )
+        await callback.answer(f"Выдача назначена: {payout_date_str}")
+
+        # Уведомляем клиента
+        if self.notification_service:
+            await self.notification_service.notify_client_payout_scheduled(app, payout_date_str)
 
     # ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
 

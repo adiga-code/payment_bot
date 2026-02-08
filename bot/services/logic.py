@@ -47,6 +47,11 @@ class LogicService:
             try:
                 check_result = await self.zcb_service.check_payer(data['inn'])
                 has_errors = bool(check_result.get('errors'))
+
+                # Проверяем наличие госзакупок
+                zakupki = check_result.get('zakupki')
+                has_gov_contracts = zakupki is not None and zakupki.get('count', 0) > 0
+
                 await self.application_repo.update_primary_check(
                     app.id,
                     status='completed' if not has_errors else 'partial',
@@ -55,6 +60,9 @@ class LogicService:
                         'color': check_result.get('color'),
                         'stop': check_result.get('stop'),
                         'payer_name': check_result.get('name'),
+                        'has_gov_contracts': has_gov_contracts,
+                        'gov_contracts_count': zakupki.get('count', 0) if zakupki else 0,
+                        'gov_contracts_sum': zakupki.get('total_sum', 0) if zakupki else 0,
                     }
                 )
                 # Обновляем данные плательщика из ЗЧБ
@@ -67,6 +75,11 @@ class LogicService:
                     update_fields['payer_address'] = check_result['address']
                 if update_fields:
                     await self.application_repo.update_by_id(app.id, **update_fields)
+
+                # Если есть госзакупки — отправляем на ручную проверку менеджеру
+                if has_gov_contracts:
+                    await self.application_repo.update_status(app.id, 'manager_review')
+                    logger.info(f"Application {app.external_id} sent to manager_review due to gov contracts")
             except Exception as e:
                 logger.error(f"ZCB check failed for {data['inn']}: {e}")
                 await self.application_repo.update_primary_check(
