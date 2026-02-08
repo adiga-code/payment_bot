@@ -136,11 +136,43 @@ class ZCBService:
             'checked_at': datetime.utcnow(),
         }
 
+    async def check_zakupki(self, inn: str) -> Optional[dict]:
+        """
+        Проверка госзакупок по ИНН.
+        Проверяет участие компании как поставщика (participant).
+
+        Returns:
+            dict с ключами: count (общее количество), total_sum (общая сумма)
+            или None если запрос не удался
+        """
+        body = await self._request('zakupki-top', {'id': inn, 'top_type': 'participant'})
+        if body is None:
+            return None
+
+        total = body.get('total', 0)
+        if isinstance(total, str):
+            total = int(total) if total.isdigit() else 0
+
+        # Считаем общую сумму по всем контрактам
+        docs = body.get('docs', [])
+        total_sum = 0
+        for doc in docs:
+            doc_sum = doc.get('sum', 0)
+            if isinstance(doc_sum, str):
+                doc_sum = int(doc_sum) if doc_sum.isdigit() else 0
+            total_sum += doc_sum
+
+        return {
+            'count': total,
+            'total_sum': total_sum,
+        }
+
     async def check_payer(self, inn: str) -> dict:
         """
         Полная проверка плательщика по ИНН:
         1. Поиск компании (ИНН → ОГРН + название)
         2. Получение рейтинга по ОГРН
+        3. Проверка госзакупок
 
         Returns:
             dict с результатами проверки (всегда возвращает dict, даже при ошибках)
@@ -156,6 +188,7 @@ class ZCBService:
             'stop': None,
             'point': None,
             'color': None,
+            'zakupki': None,  # {'count': N, 'total_sum': X}
             'checked_at': datetime.utcnow().isoformat(),
             'errors': [],
         }
@@ -188,7 +221,17 @@ class ZCBService:
         result['point'] = rating['point']
         result['color'] = get_zcb_color(rating['risk_level'])
 
+        # 3. Проверка госзакупок
+        zakupki = await self.check_zakupki(inn)
+        if zakupki:
+            result['zakupki'] = zakupki
+
         return result
+
+
+def format_amount_short(amount: int) -> str:
+    """Форматирует сумму: 5000000 → '5 000 000₽'"""
+    return f"{amount:,}₽".replace(",", " ")
 
 
 def format_payer_check(check_result: dict) -> str:
@@ -217,5 +260,14 @@ def format_payer_check(check_result: dict) -> str:
             lines.append('⚠️ ОГРН не определён')
         elif 'rating_failed' in errors:
             lines.append('⚠️ Не удалось получить рейтинг')
+
+    # Госзакупки
+    zakupki = check_result.get('zakupki')
+    if zakupki and zakupki.get('count', 0) > 0:
+        count = zakupki['count']
+        total_sum = zakupki.get('total_sum', 0)
+        lines.append(f"⚠️ Госзакупки: {count} контр. на {format_amount_short(total_sum)}")
+    elif zakupki is not None:
+        lines.append("✅ Госзакупки: нет")
 
     return '\n'.join(lines)
