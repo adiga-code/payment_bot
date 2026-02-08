@@ -24,6 +24,10 @@ class ContractForm(StatesGroup):
     waiting_for_invoice_purpose = State()
 
 
+class PaymentForm(StatesGroup):
+    waiting_for_failure_reason = State()  # Ожидание причины неоплаты
+
+
 class ClientHandlers:
     def __init__(
             self,
@@ -52,6 +56,11 @@ class ClientHandlers:
         self.router.message.register(self.process_contract_number, ContractForm.waiting_for_contract_number)
         self.router.message.register(self.process_contract_date, ContractForm.waiting_for_contract_date)
         self.router.message.register(self.process_invoice_purpose, ContractForm.waiting_for_invoice_purpose)
+
+        # Подтверждение оплаты
+        self.router.callback_query(F.data.startswith("client:paid:"))(self.cb_payment_confirmed)
+        self.router.callback_query(F.data.startswith("client:not_paid:"))(self.cb_payment_failed)
+        self.router.message.register(self.process_failure_reason, PaymentForm.waiting_for_failure_reason)
 
     # ==================== СОЗДАНИЕ ЗАЯВКИ ====================
 
@@ -254,3 +263,114 @@ class ClientHandlers:
         # Уведомляем руководителей
         if self.notification_service:
             await self.notification_service.notify_supervisors_new_application(app)
+
+    # ==================== ПОДТВЕРЖДЕНИЕ ОПЛАТЫ ====================
+
+    async def cb_payment_confirmed(self, callback: CallbackQuery, state: FSMContext):
+        """Клиент подтвердил оплату"""
+        app_id = int(callback.data.split(":")[-1])
+
+        if not self.application_repo:
+            await callback.answer("Сервис недоступен", show_alert=True)
+            return
+
+        app = await self.application_repo.get_by_id(app_id)
+        if not app:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+
+        if app.status != 'invoice_sent':
+            await callback.answer("Заявка уже обработана", show_alert=True)
+            return
+
+        # Обновляем статус
+        await self.application_repo.update_status(app_id, 'client_confirmed')
+        await self.application_repo.update_by_id(
+            app_id,
+            client_confirmed_at=datetime.utcnow()
+        )
+
+        await callback.message.edit_text(
+            f"✅ <b>Спасибо! Оплата отмечена.</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: {app.amount:,.0f}₽\n\n"
+            f"⏳ Ожидайте подтверждения поступления средств.",
+            parse_mode="HTML"
+        )
+        await callback.answer()
+
+        # Уведомляем бухгалтера
+        if self.notification_service:
+            await self.notification_service.notify_accountant_payment_confirmed(app)
+
+    async def cb_payment_failed(self, callback: CallbackQuery, state: FSMContext):
+        """Клиент не смог оплатить"""
+        app_id = int(callback.data.split(":")[-1])
+
+        if not self.application_repo:
+            await callback.answer("Сервис недоступен", show_alert=True)
+            return
+
+        app = await self.application_repo.get_by_id(app_id)
+        if not app:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+
+        if app.status != 'invoice_sent':
+            await callback.answer("Заявка уже обработана", show_alert=True)
+            return
+
+        # Сохраняем app_id для следующего шага
+        await state.update_data(failed_payment_app_id=app_id)
+        await state.set_state(PaymentForm.waiting_for_failure_reason)
+
+        await callback.message.edit_text(
+            f"❌ <b>Не удалось оплатить</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n\n"
+            f"Пожалуйста, укажите причину:",
+            parse_mode="HTML"
+        )
+        await callback.answer()
+
+    async def process_failure_reason(self, message: Message, state: FSMContext):
+        """Обработка причины неоплаты"""
+        reason = message.text.strip()
+        if not reason:
+            await message.answer("❗ Пожалуйста, укажите причину.")
+            return
+
+        data = await state.get_data()
+        app_id = data.get('failed_payment_app_id')
+
+        if not app_id or not self.application_repo:
+            await message.answer("❗ Ошибка. Попробуйте ещё раз.")
+            await state.clear()
+            return
+
+        app = await self.application_repo.get_by_id(app_id)
+        if not app:
+            await message.answer("❗ Заявка не найдена.")
+            await state.clear()
+            return
+
+        # Аннулируем заявку
+        await self.application_repo.update_status(app_id, 'cancelled')
+        await self.application_repo.update_by_id(
+            app_id,
+            cancellation_reason=reason
+        )
+
+        await state.clear()
+
+        await message.answer(
+            f"❌ <b>Заявка аннулирована</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: {app.amount:,.0f}₽\n"
+            f"📝 Причина: {reason}\n\n"
+            f"Для создания новой заявки используйте /zayavka",
+            parse_mode="HTML"
+        )
+
+        # Уведомляем менеджера
+        if self.notification_service:
+            await self.notification_service.notify_manager_payment_failed(app, reason)

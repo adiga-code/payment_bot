@@ -170,3 +170,153 @@ class NotificationService:
 
         for acc in accountants:
             await self._safe_send(acc.telegram_id, text)
+
+    async def notify_accountant_payment_confirmed(self, app):
+        """Уведомить бухгалтеров о подтверждении оплаты клиентом"""
+        from keyboards.accountant_kb import AccountantKeyboards
+
+        accountants = await self.user_repo.get_accountants()
+
+        text = (
+            f"💰 <b>Клиент подтвердил оплату</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
+        )
+
+        if app.payer_name:
+            text += f"📛 Плательщик: {app.payer_name}\n"
+
+        text += f"\n⏳ Проверьте поступление средств на счёт."
+
+        kb = AccountantKeyboards.payment_confirmation(app.id)
+
+        for acc in accountants:
+            await self._safe_send(acc.telegram_id, text, reply_markup=kb)
+
+    async def notify_accountant_daily_reminder(self, pending_apps: list):
+        """Ежедневное напоминание бухгалтерам в 20:00 МСК"""
+        accountants = await self.user_repo.get_accountants()
+
+        if not pending_apps:
+            text = (
+                f"📊 <b>Ежедневная проверка (20:00)</b>\n\n"
+                f"✅ Нет ожидающих подтверждения заявок."
+            )
+        else:
+            text = (
+                f"📊 <b>Ежедневная проверка (20:00)</b>\n\n"
+                f"⚠️ Заявок на проверку: <b>{len(pending_apps)}</b>\n\n"
+            )
+            for app in pending_apps[:5]:  # Показываем первые 5
+                text += f"• {app.external_id} — {app.amount:,.0f}₽\n"
+            if len(pending_apps) > 5:
+                text += f"...и ещё {len(pending_apps) - 5}\n"
+            text += f"\n🔔 Используйте /accountant для проверки."
+
+        for acc in accountants:
+            await self._safe_send(acc.telegram_id, text)
+
+    # ==================== РАСШИРЕННЫЕ УВЕДОМЛЕНИЯ КЛИЕНТУ ====================
+
+    async def notify_client_invoice_sent(self, app):
+        """Уведомить клиента об отправке счёта с кнопками подтверждения"""
+        from keyboards.client_kb import ClientKeyboard
+
+        text = (
+            f"📄 <b>Счёт на оплату</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n\n"
+            f"После оплаты нажмите кнопку «Оплачено».\n"
+            f"⏰ Срок оплаты: до 20:00 сегодня."
+        )
+
+        kb = ClientKeyboard.payment_confirmation(app.id)
+        await self._safe_send(app.client_chat_id, text, reply_markup=kb)
+
+    async def notify_client_payment_reminder(self, app):
+        """Напоминание клиенту об оплате (18:00)"""
+        from keyboards.client_kb import ClientKeyboard
+
+        text = (
+            f"⏰ <b>Напоминание об оплате</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n\n"
+            f"⚠️ Срок оплаты: до 20:00 сегодня.\n"
+            f"Неоплаченные заявки будут аннулированы."
+        )
+
+        kb = ClientKeyboard.payment_reminder(app.id)
+        await self._safe_send(app.client_chat_id, text, reply_markup=kb)
+
+    async def notify_client_payment_not_received(self, app):
+        """Уведомить клиента о том, что средства не поступили"""
+        text = (
+            f"❌ <b>Средства не поступили</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: {app.amount:,.0f}₽\n\n"
+            f"К сожалению, средства не поступили на счёт.\n"
+            f"Заявка аннулирована.\n\n"
+            f"Для создания новой заявки: /zayavka"
+        )
+        await self._safe_send(app.client_chat_id, text)
+
+    async def notify_client_payout_scheduled(self, app, payout_date_str: str):
+        """Уведомить клиента о дате выдачи"""
+        text = (
+            f"✅ <b>Средства поступили!</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n\n"
+            f"📅 Дата выдачи: <b>{payout_date_str}</b>"
+        )
+        await self._safe_send(app.client_chat_id, text)
+
+    async def notify_client_cancelled(self, app, reason: str = None):
+        """Уведомить клиента об аннуляции заявки"""
+        text = (
+            f"❌ <b>Заявка аннулирована</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: {app.amount:,.0f}₽\n"
+        )
+        if reason:
+            text += f"📝 Причина: {reason}\n"
+        text += f"\nДля создания новой заявки: /zayavka"
+        await self._safe_send(app.client_chat_id, text)
+
+    # ==================== РАСШИРЕННЫЕ УВЕДОМЛЕНИЯ МЕНЕДЖЕРУ ====================
+
+    async def notify_manager_payment_failed(self, app, reason: str):
+        """Уведомить менеджера о том, что клиент не смог оплатить"""
+        if not app.manager_id:
+            return
+        manager = await self.user_repo.get_by_id(app.manager_id)
+        if not manager:
+            return
+
+        text = (
+            f"❌ <b>Клиент не смог оплатить</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: {app.amount:,.0f}₽\n"
+            f"📝 Причина: {reason}\n\n"
+            f"⚠️ Заявка аннулирована."
+        )
+        await self._safe_send(manager.telegram_id, text)
+
+    async def notify_manager_payout_selection(self, app):
+        """Уведомить менеджера о необходимости выбрать формат выдачи"""
+        from keyboards.manager_kb import ManagerKeyboards
+
+        if not app.manager_id:
+            return
+        manager = await self.user_repo.get_by_id(app.manager_id)
+        if not manager:
+            return
+
+        text = (
+            f"✅ <b>Средства поступили на счёт!</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n\n"
+            f"Выберите формат выдачи:"
+        )
+
+        kb = ManagerKeyboards.payout_format(app.id)
+        await self._safe_send(manager.telegram_id, text, reply_markup=kb)

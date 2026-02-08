@@ -188,10 +188,12 @@ class PaymentBot:
 
 
     async def _setup_scheduler(self):
-        """Запуск фоновых задач (сброс лимитов)"""
+        """Запуск фоновых задач (сброс лимитов и напоминания)"""
         self.scheduler = SchedulerService(
             company_repo=self.company_repo,
-            bank_repo=self.bank_repo
+            bank_repo=self.bank_repo,
+            application_repo=self.application_repo,
+            notification_service=self.notification_service
         )
         await self.scheduler.start()
 

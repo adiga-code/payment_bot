@@ -66,6 +66,10 @@ class AccountantHandlers:
         self.router.callback_query(F.data.startswith("acc:confirm_send:"))(self.cb_confirm_send)
         self.router.callback_query(F.data.startswith("acc:regen:"))(self.cb_regenerate)
 
+        # Подтверждение получения средств
+        self.router.callback_query(F.data.startswith("acc:confirm_payment:"))(self.cb_confirm_payment)
+        self.router.callback_query(F.data.startswith("acc:payment_not_received:"))(self.cb_payment_not_received)
+
     # ==================== КОМАНДЫ ====================
 
     async def cmd_accountant(self, message: Message, db_user):
@@ -284,6 +288,17 @@ class AccountantHandlers:
             sent_to_client_at=datetime.utcnow()
         )
 
+        # Обновляем статус заявки на 'invoice_sent'
+        await self.application_repo.update_status(app.id, 'invoice_sent')
+        await self.application_repo.update_by_id(
+            app.id,
+            invoice_sent_at=datetime.utcnow()
+        )
+
+        # Отправляем клиенту уведомление с кнопками подтверждения оплаты
+        if self.notification_service:
+            await self.notification_service.notify_client_invoice_sent(app)
+
         # Лог
         await self.log_repo.create_log(
             action='invoice_sent_to_client',
@@ -295,7 +310,8 @@ class AccountantHandlers:
         await callback.message.edit_text(
             f"✅ <b>Счёт {doc.number} отправлен клиенту!</b>\n\n"
             f"📋 Заявка: {app.external_id}\n"
-            f"💰 Сумма: {app.amount:,.0f}₽",
+            f"💰 Сумма: {app.amount:,.0f}₽\n\n"
+            f"⏳ Ожидаем подтверждения оплаты от клиента.",
             reply_markup=self.kb.back_to_menu(),
             parse_mode="HTML"
         )
@@ -425,3 +441,85 @@ class AccountantHandlers:
             )
             rows = result.all()
             return [{'doc': row[0], 'app': row[1]} for row in rows]
+
+    # ==================== ПОДТВЕРЖДЕНИЕ ПОЛУЧЕНИЯ СРЕДСТВ ====================
+
+    async def cb_confirm_payment(self, callback: CallbackQuery, db_user):
+        """Бухгалтер подтверждает получение средств"""
+        app_id = int(callback.data.split(":")[-1])
+
+        app = await self.application_repo.get_with_relations(app_id)
+        if not app:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+
+        if app.status != 'client_confirmed':
+            await callback.answer("Заявка уже обработана", show_alert=True)
+            return
+
+        # Обновляем статус
+        await self.application_repo.update_status(app_id, 'payment_received')
+        await self.application_repo.update_by_id(
+            app_id,
+            payment_received_at=datetime.utcnow()
+        )
+
+        # Лог
+        await self.log_repo.create_log(
+            action='payment_confirmed_by_accountant',
+            application_id=app_id,
+            user_id=db_user.id
+        )
+
+        await callback.message.edit_text(
+            f"✅ <b>Получение средств подтверждено!</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: {app.amount:,.0f}₽\n\n"
+            f"📤 Менеджер уведомлён для выбора формата выдачи.",
+            parse_mode="HTML"
+        )
+        await callback.answer("Подтверждено!")
+
+        # Уведомляем менеджера для выбора T+N
+        if self.notification_service:
+            await self.notification_service.notify_manager_payout_selection(app)
+
+    async def cb_payment_not_received(self, callback: CallbackQuery, db_user):
+        """Бухгалтер отмечает, что средства не поступили"""
+        app_id = int(callback.data.split(":")[-1])
+
+        app = await self.application_repo.get_with_relations(app_id)
+        if not app:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+
+        if app.status != 'client_confirmed':
+            await callback.answer("Заявка уже обработана", show_alert=True)
+            return
+
+        # Аннулируем заявку
+        await self.application_repo.update_status(app_id, 'cancelled')
+        await self.application_repo.update_by_id(
+            app_id,
+            cancellation_reason="Средства не поступили на счёт"
+        )
+
+        # Лог
+        await self.log_repo.create_log(
+            action='payment_not_received',
+            application_id=app_id,
+            user_id=db_user.id
+        )
+
+        await callback.message.edit_text(
+            f"❌ <b>Средства не поступили</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: {app.amount:,.0f}₽\n\n"
+            f"⚠️ Заявка аннулирована. Клиент уведомлён.",
+            parse_mode="HTML"
+        )
+        await callback.answer()
+
+        # Уведомляем клиента
+        if self.notification_service:
+            await self.notification_service.notify_client_payment_not_received(app)
