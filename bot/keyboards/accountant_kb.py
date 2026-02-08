@@ -100,6 +100,59 @@ class AccountantKeyboards:
         return builder.as_markup()
 
     @staticmethod
+    def payment_confirmation(app_id: int) -> InlineKeyboardMarkup:
+        """Кнопки подтверждения получения средств (для бухгалтера)"""
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(
+                text="✅ Подтвердить получение",
+                callback_data=f"acc:confirm_payment:{app_id}"
+            )
+        )
+        builder.row(
+            InlineKeyboardButton(
+                text="❌ Средства не пришли",
+                callback_data=f"acc:payment_not_received:{app_id}"
+            )
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def pending_payments_list(applications: list, page: int = 0, per_page: int = 5) -> InlineKeyboardMarkup:
+        """Список заявок, ожидающих подтверждения оплаты"""
+        builder = InlineKeyboardBuilder()
+
+        start = page * per_page
+        end = start + per_page
+        page_apps = applications[start:end]
+
+        for app in page_apps:
+            builder.row(
+                InlineKeyboardButton(
+                    text=f"💰 {app.external_id} | {app.amount:,.0f}₽",
+                    callback_data=f"acc:check_payment:{app.id}"
+                )
+            )
+
+        # Пагинация
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(
+                InlineKeyboardButton(text="⬅️", callback_data=f"acc:payments_page:{page - 1}")
+            )
+        if end < len(applications):
+            nav_buttons.append(
+                InlineKeyboardButton(text="➡️", callback_data=f"acc:payments_page:{page + 1}")
+            )
+        if nav_buttons:
+            builder.row(*nav_buttons)
+
+        builder.row(
+            InlineKeyboardButton(text="🔙 В меню", callback_data="acc:menu")
+        )
+        return builder.as_markup()
+
+    @staticmethod
     def back_to_menu() -> InlineKeyboardMarkup:
         """Кнопка возврата в меню"""
         builder = InlineKeyboardBuilder()
