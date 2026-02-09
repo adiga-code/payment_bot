@@ -68,6 +68,11 @@ CREATE TABLE companies (
     zcb_point INT,
     zcb_checked_at TIMESTAMP,
 
+    -- Риск ЦБ РФ
+    cbr_risk_level VARCHAR(50),
+    cbr_risk_facts JSONB,
+    cbr_checked_at TIMESTAMP,
+
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
