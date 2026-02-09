@@ -44,6 +44,36 @@ class PaymentBot:
         self.document_repo = DocumentRepository(self.db_manager.async_session)
         self.setting_repo = SettingRepository(self.db_manager.async_session)
 
+    async def _ensure_admins(self):
+        """Автоматическое создание/обновление админов из ADMIN_IDS"""
+        if not self.config.ADMIN_IDS:
+            logging.warning("No ADMIN_IDS configured in environment")
+            return
+
+        for telegram_id in self.config.ADMIN_IDS:
+            try:
+                user = await self.user_repo.get_by_telegram_id(telegram_id)
+                if not user:
+                    # Создаем нового админа
+                    await self.user_repo.create(
+                        telegram_id=telegram_id,
+                        role='admin',
+                        username=None,
+                        first_name=None,
+                        last_name=None
+                    )
+                    logging.info(f"Created admin user with telegram_id={telegram_id}")
+                elif user.role != 'admin':
+                    # Обновляем роль на admin
+                    await self.user_repo.update_by_id(user.id, role='admin', is_active=True)
+                    logging.info(f"Updated user {telegram_id} to admin role")
+                else:
+                    # Админ уже существует с правильной ролью
+                    await self.user_repo.update_by_id(user.id, is_active=True)
+                    logging.info(f"Admin {telegram_id} already exists with correct role")
+            except Exception as e:
+                logging.error(f"Failed to ensure admin {telegram_id}: {e}")
+
     async def _setup_services(self):
         self.zcb_service = ZCBService(api_key=self.config.ZCB_API_KEY)
         self.notification_service = NotificationService(
@@ -201,6 +231,7 @@ class PaymentBot:
         logging.info("Bot is starting...")
         await self._setup_database()
         await self._setup_repositories()
+        await self._ensure_admins()
         await self._setup_services()
         await self._setup_handlers()
         await self._setup_scheduler()
