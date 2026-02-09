@@ -132,7 +132,7 @@ class ZCBService:
             'level': body.get('level'),  # success, warning, danger
             'facts': body.get('facts', {}),  # {danger: [...], warning: [...]}
             'history': body.get('history', []),
-            'checked_at': datetime.utcnow(),
+            'checked_at': datetime.utcnow().isoformat(),
         }
 
     async def get_rating(self, ogrn: str) -> Optional[dict]:

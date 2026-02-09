@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from decimal import Decimal
-from datetime import date
+from datetime import date, datetime
 
 from database import (
     UserRepository,
@@ -677,11 +677,15 @@ class AdminHandlers:
             status_msg = await message.answer("🔍 Проверяю компанию (Риск ЦБ РФ)...")
             cbr_rating = await self.zcb_service.get_cbr_rating(ogrn)
             if cbr_rating:
+                # Конвертируем ISO строку обратно в datetime для БД
+                checked_at_str = cbr_rating.get('checked_at')
+                checked_at = datetime.fromisoformat(checked_at_str) if checked_at_str else None
+
                 await self.company_repo.update_by_id(
                     company.id,
                     cbr_risk_level=cbr_rating.get('level'),
                     cbr_risk_facts=cbr_rating.get('facts'),
-                    cbr_checked_at=cbr_rating.get('checked_at')
+                    cbr_checked_at=checked_at
                 )
                 from services.honest_business_api import get_cbr_risk_emoji, get_cbr_risk_name
                 emoji = get_cbr_risk_emoji(cbr_rating.get('level'))
