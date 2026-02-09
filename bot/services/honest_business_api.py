@@ -116,8 +116,28 @@ class ZCBService:
             'raw': item,
         }
 
+    async def get_cbr_rating(self, ogrn: str) -> Optional[dict]:
+        """
+        Получить уровень риска ЦБ РФ по ОГРН.
+
+        Returns:
+            dict с ключами: level (success/warning/danger), facts, history
+            или None если запрос не удался
+        """
+        body = await self._request('cbr-rating', {'id': ogrn})
+        if not body:
+            return None
+
+        return {
+            'level': body.get('level'),  # success, warning, danger
+            'facts': body.get('facts', {}),  # {danger: [...], warning: [...]}
+            'history': body.get('history', []),
+            'checked_at': datetime.utcnow(),
+        }
+
     async def get_rating(self, ogrn: str) -> Optional[dict]:
         """
+        УСТАРЕЛ: Использовать get_cbr_rating вместо этого метода.
         Получить рейтинг компании по ОГРН.
 
         Returns:
@@ -171,7 +191,7 @@ class ZCBService:
         """
         Полная проверка плательщика по ИНН:
         1. Поиск компании (ИНН → ОГРН + название)
-        2. Получение рейтинга по ОГРН
+        2. Получение риска ЦБ РФ по ОГРН
         3. Проверка госзакупок
 
         Returns:
@@ -188,6 +208,7 @@ class ZCBService:
             'stop': None,
             'point': None,
             'color': None,
+            'cbr_risk': None,  # {'level': 'success/warning/danger', 'facts': {...}}
             'zakupki': None,  # {'count': N, 'total_sum': X}
             'checked_at': datetime.utcnow().isoformat(),
             'errors': [],
@@ -204,22 +225,17 @@ class ZCBService:
         result['kpp'] = search_data.get('kpp')
         result['address'] = search_data.get('address')
 
-        # 2. Рейтинг по ОГРН
+        # 2. Риск ЦБ РФ по ОГРН
         ogrn = search_data.get('ogrn')
         if not ogrn:
             result['errors'].append('ogrn_not_found')
             return result
 
-        rating = await self.get_rating(ogrn)
-        if not rating:
-            result['errors'].append('rating_failed')
-            return result
-
-        result['rating_category'] = rating['rating_category']
-        result['risk_level'] = rating['risk_level']
-        result['stop'] = rating['stop']
-        result['point'] = rating['point']
-        result['color'] = get_zcb_color(rating['risk_level'])
+        cbr_risk = await self.get_cbr_rating(ogrn)
+        if not cbr_risk:
+            result['errors'].append('cbr_rating_failed')
+        else:
+            result['cbr_risk'] = cbr_risk
 
         # 3. Проверка госзакупок
         zakupki = await self.check_zakupki(inn)
@@ -234,40 +250,101 @@ def format_amount_short(amount: int) -> str:
     return f"{amount:,}₽".replace(",", " ")
 
 
+def get_cbr_risk_emoji(level: str | None) -> str:
+    """Получить эмодзи для уровня риска ЦБ РФ"""
+    if not level:
+        return '⚪'
+    level_map = {
+        'success': '🟢',
+        'warning': '🟡',
+        'danger': '🔴'
+    }
+    return level_map.get(level.lower(), '⚪')
+
+
+def get_cbr_risk_name(level: str | None) -> str:
+    """Получить название уровня риска ЦБ РФ"""
+    if not level:
+        return 'Не проверен'
+    level_map = {
+        'success': 'Низкий риск',
+        'warning': 'Средний риск',
+        'danger': 'Высокий риск'
+    }
+    return level_map.get(level.lower(), 'Неизвестно')
+
+
+def format_cbr_rating(cbr_data: dict | None) -> str:
+    """Форматирование результатов проверки риска ЦБ РФ"""
+    if not cbr_data:
+        return '⚪ Риск ЦБ РФ: не проверен'
+
+    level = cbr_data.get('level')
+    emoji = get_cbr_risk_emoji(level)
+    name = get_cbr_risk_name(level)
+
+    lines = [f'{emoji} <b>Риск ЦБ РФ: {name}</b>']
+
+    # Показываем факторы риска
+    facts = cbr_data.get('facts', {})
+
+    # Критические факторы
+    danger_facts = facts.get('danger', [])
+    if danger_facts:
+        lines.append('\n<b>Критические факторы:</b>')
+        for fact in danger_facts[:5]:  # Первые 5
+            name_fact = fact.get('name', '')
+            value = fact.get('value', '')
+            if name_fact:
+                lines.append(f'  🔴 {name_fact}: {value}')
+
+    # Предупреждения
+    warning_facts = facts.get('warning', [])
+    if warning_facts:
+        lines.append('\n<b>Предупреждения:</b>')
+        for fact in warning_facts[:5]:  # Первые 5
+            name_fact = fact.get('name', '')
+            value = fact.get('value', '')
+            if name_fact:
+                lines.append(f'  🟡 {name_fact}: {value}')
+
+    return '\n'.join(lines)
+
+
 def format_payer_check(check_result: dict) -> str:
     """Форматирование результатов проверки плательщика для отображения"""
     if not check_result:
-        return '⚪ Проверка ЗЧБ: не выполнена'
+        return '⚪ Проверка не выполнена'
 
-    lines = ['<b>Проверка ЗЧБ:</b>']
+    lines = []
 
     if check_result.get('name'):
-        lines.append(f"📛 {check_result['name']}")
+        lines.append(f"📛 <b>{check_result['name']}</b>")
 
     if check_result.get('ogrn'):
-        lines.append(f"🔢 ОГРН: {check_result['ogrn']}")
+        lines.append(f"🔢 ОГРН: <code>{check_result['ogrn']}</code>")
 
-    if check_result.get('risk_level'):
-        color_text = format_zcb_color(check_result['risk_level'])
-        lines.append(f"🎨 Цвет: {color_text}")
-        lines.append(f"📊 Индекс: {check_result.get('rating_category', '?')} ({check_result.get('point', '?')})")
-        lines.append(f"🚫 Стоп-факт: {'Да' if check_result.get('stop') else 'Нет'}")
+    # Риск ЦБ РФ
+    cbr_risk = check_result.get('cbr_risk')
+    if cbr_risk:
+        cbr_text = format_cbr_rating(cbr_risk)
+        lines.append(f"\n{cbr_text}")
+    elif 'cbr_rating_failed' in check_result.get('errors', []):
+        lines.append('\n⚠️ Не удалось получить риск ЦБ РФ')
     elif check_result.get('errors'):
         errors = check_result['errors']
         if 'search_failed' in errors:
-            lines.append('⚠️ Компания не найдена в ЗЧБ')
+            lines.append('\n⚠️ Компания не найдена')
         elif 'ogrn_not_found' in errors:
-            lines.append('⚠️ ОГРН не определён')
-        elif 'rating_failed' in errors:
-            lines.append('⚠️ Не удалось получить рейтинг')
+            lines.append('\n⚠️ ОГРН не определён')
 
     # Госзакупки
     zakupki = check_result.get('zakupki')
     if zakupki and zakupki.get('count', 0) > 0:
         count = zakupki['count']
         total_sum = zakupki.get('total_sum', 0)
-        lines.append(f"⚠️ Госзакупки: {count} контр. на {format_amount_short(total_sum)}")
+        lines.append(f"\n⚠️ <b>Госзакупки:</b> {count} контр. на {format_amount_short(total_sum)}")
     elif zakupki is not None:
-        lines.append("✅ Госзакупки: нет")
+        lines.append("\n✅ <b>Госзакупки:</b> проверка пройдена")
 
     return '\n'.join(lines)

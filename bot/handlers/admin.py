@@ -671,30 +671,36 @@ class AdminHandlers:
             monthly_limit=limit * 20
         )
 
-        # Проверяем в ЗЧБ
+        # Проверяем риск ЦБ РФ
         zcb_info = ""
         if ogrn and self.zcb_service:
-            status_msg = await message.answer("🔍 Проверяю компанию в ЗЧБ...")
-            rating = await self.zcb_service.get_rating(ogrn)
-            if rating:
+            status_msg = await message.answer("🔍 Проверяю компанию (Риск ЦБ РФ)...")
+            cbr_rating = await self.zcb_service.get_cbr_rating(ogrn)
+            if cbr_rating:
                 await self.company_repo.update_by_id(
                     company.id,
-                    zcb_rating_category=rating['rating_category'],
-                    zcb_risk_level=rating['risk_level'],
-                    zcb_stop=rating['stop'],
-                    zcb_point=rating['point'],
-                    zcb_checked_at=rating['checked_at']
+                    cbr_risk_level=cbr_rating.get('level'),
+                    cbr_risk_facts=cbr_rating.get('facts'),
+                    cbr_checked_at=cbr_rating.get('checked_at')
                 )
-                color_text = format_zcb_color(rating['risk_level'])
+                from services.honest_business_api import get_cbr_risk_emoji, get_cbr_risk_name
+                emoji = get_cbr_risk_emoji(cbr_rating.get('level'))
+                risk_name = get_cbr_risk_name(cbr_rating.get('level'))
                 zcb_info = (
-                    f"\n\n<b>ЗЧБ:</b>\n"
-                    f"🎨 Цвет: {color_text}\n"
-                    f"📊 Индекс: {rating['rating_category']} ({rating['point']})\n"
-                    f"⚠️ Уровень риска: {rating['risk_level']}\n"
-                    f"🚫 Стоп-факт: {'Да' if rating['stop'] else 'Нет'}"
+                    f"\n\n<b>Риск ЦБ РФ:</b>\n"
+                    f"{emoji} {risk_name}"
                 )
+
+                # Показываем краткую сводку по факторам
+                facts = cbr_rating.get('facts', {})
+                danger_count = len(facts.get('danger', []))
+                warning_count = len(facts.get('warning', []))
+                if danger_count > 0:
+                    zcb_info += f"\n🔴 Критических факторов: {danger_count}"
+                if warning_count > 0:
+                    zcb_info += f"\n🟡 Предупреждений: {warning_count}"
             else:
-                zcb_info = "\n\n⚠️ Не удалось проверить в ЗЧБ"
+                zcb_info = "\n\n⚠️ Не удалось получить риск ЦБ РФ"
             try:
                 await status_msg.delete()
             except:
@@ -730,18 +736,25 @@ class AdminHandlers:
             monthly_left = company.monthly_limit - company.current_monthly_used
 
             zcb_text = ""
-            if company.zcb_risk_level:
-                color_text = format_zcb_color(company.zcb_risk_level)
+            if company.cbr_risk_level:
+                from services.honest_business_api import get_cbr_risk_emoji, get_cbr_risk_name
+                emoji = get_cbr_risk_emoji(company.cbr_risk_level)
+                risk_name = get_cbr_risk_name(company.cbr_risk_level)
                 zcb_text = (
-                    f"\n<b>ЗЧБ:</b>\n"
-                    f"🎨 Цвет: {color_text}\n"
-                    f"📊 Индекс: {company.zcb_rating_category} ({company.zcb_point})\n"
-                    f"🚫 Стоп-факт: {'Да' if company.zcb_stop else 'Нет'}\n"
+                    f"\n<b>Риск ЦБ РФ:</b>\n"
+                    f"{emoji} {risk_name}\n"
                 )
-                if company.zcb_checked_at:
-                    zcb_text += f"🕐 Проверено: {company.zcb_checked_at.strftime('%d.%m.%Y %H:%M')}\n"
+                if company.cbr_risk_facts:
+                    danger_count = len(company.cbr_risk_facts.get('danger', []))
+                    warning_count = len(company.cbr_risk_facts.get('warning', []))
+                    if danger_count > 0:
+                        zcb_text += f"🔴 Критических факторов: {danger_count}\n"
+                    if warning_count > 0:
+                        zcb_text += f"🟡 Предупреждений: {warning_count}\n"
+                if company.cbr_checked_at:
+                    zcb_text += f"🕐 Проверено: {company.cbr_checked_at.strftime('%d.%m.%Y %H:%M')}\n"
             elif company.ogrn:
-                zcb_text = "\n🎨 ЗЧБ: ⚪ Не проверен\n"
+                zcb_text = "\n🎨 Риск ЦБ РФ: ⚪ Не проверен\n"
 
             await callback.message.edit_text(
                 f"🏢 <b>{company.name}</b>\n\n"

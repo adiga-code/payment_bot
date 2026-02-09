@@ -46,6 +46,14 @@ class NotificationService:
         )
         await self._safe_send(app.client_chat_id, text)
 
+    async def notify_client_approved_by_bank(self, app):
+        """Уведомить клиента об одобрении заявки банком"""
+        text = (
+            f"🏦 <b>Заявка {app.external_id} одобрена банком!</b>\n\n"
+            f"💰 Сумма: <b>{app.amount:,.0f}₽</b>"
+        )
+        await self._safe_send(app.client_chat_id, text)
+
     async def notify_client_contract_details_needed(self, app):
         """Уведомить клиента о необходимости заполнить данные договора"""
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -58,7 +66,8 @@ class NotificationService:
         ])
 
         text = (
-            f"🏦 <b>Заявка {app.external_id} одобрена банком!</b>\n\n"
+            f"📝 <b>Необходимо заполнить данные договора</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
             f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n\n"
             f"Для формирования счёта необходимо указать:\n"
             f"• Номер договора\n"

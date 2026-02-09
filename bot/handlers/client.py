@@ -89,7 +89,7 @@ class ClientHandlers:
             return
         amount = int(amount_text)
         await state.update_data(amount=amount)
-        await message.answer("Введите ИНН получателя:")
+        await message.answer("Введите ИНН компании:")
         await state.set_state(ApplicationForm.waiting_for_inn)
 
     async def process_inn(self, message: Message, state: FSMContext):

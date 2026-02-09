@@ -94,6 +94,11 @@ class Company(Base):
     zcb_point: Mapped[int | None] = mapped_column(Integer, nullable=True)
     zcb_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Риск ЦБ РФ
+    cbr_risk_level: Mapped[str | None] = mapped_column(String(50), nullable=True)  # success, warning, danger
+    cbr_risk_facts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    cbr_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

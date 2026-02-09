@@ -18,6 +18,9 @@ class SupervisorKeyboards:
             InlineKeyboardButton(text="🚨 Эскалации", callback_data="sv:escalations")
         )
         builder.row(
+            InlineKeyboardButton(text="⚠️ Минимальный риск", callback_data="sv:min_risk")
+        )
+        builder.row(
             InlineKeyboardButton(text="📋 Все заявки", callback_data="sv:all")
         )
         builder.row(
