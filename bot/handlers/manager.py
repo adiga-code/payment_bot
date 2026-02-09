@@ -619,6 +619,8 @@ class ManagerHandlers:
             'primary_check': '🔍 Проверка',
             'manager_review': '👀 На рассмотрении',
             'bank_review': '🏦 В банке',
+            'min_risk_review': '⚠️ Минимальный риск',
+            'awaiting_contract_details': '📝 Ожидание данных договора',
             'supervisor_review': '👔 У руководителя',
             'approved': '✅ Одобрена',
             'rejected': '❌ Отклонена',

@@ -80,6 +80,7 @@ class SupervisorHandlers:
         self.router.callback_query(F.data == "sv:menu")(self.cb_menu)
         self.router.callback_query(F.data == "sv:pending")(self.cb_pending)
         self.router.callback_query(F.data == "sv:escalations")(self.cb_escalations)
+        self.router.callback_query(F.data == "sv:min_risk")(self.cb_min_risk)
         self.router.callback_query(F.data == "sv:all")(self.cb_all_applications)
         self.router.callback_query(F.data.startswith("sv:page:"))(self.cb_page)
         self.router.callback_query(F.data.startswith("sv:app:"))(self.cb_view_application)
@@ -99,12 +100,14 @@ class SupervisorHandlers:
         """Команда /supervisor - главное меню"""
         pending = await self.application_repo.get_by_status('supervisor_review')
         escalations = await self._get_escalations()
+        min_risk_apps = await self.application_repo.get_by_status('min_risk_review')
 
         await message.answer(
             f"👑 <b>Панель руководителя</b>\n\n"
             f"👤 {db_user.first_name or db_user.username}\n\n"
             f"🔴 Требуют решения: <b>{len(pending)}</b>\n"
-            f"🚨 Эскалации: <b>{len(escalations)}</b>",
+            f"🚨 Эскалации: <b>{len(escalations)}</b>\n"
+            f"⚠️ Минимальный риск: <b>{len(min_risk_apps)}</b>",
             reply_markup=self.kb.main_menu(),
             parse_mode="HTML"
         )
@@ -115,12 +118,14 @@ class SupervisorHandlers:
         """Возврат в главное меню"""
         pending = await self.application_repo.get_by_status('supervisor_review')
         escalations = await self._get_escalations()
+        min_risk_apps = await self.application_repo.get_by_status('min_risk_review')
 
         await callback.message.edit_text(
             f"👑 <b>Панель руководителя</b>\n\n"
             f"👤 {db_user.first_name or db_user.username}\n\n"
             f"🔴 Требуют решения: <b>{len(pending)}</b>\n"
-            f"🚨 Эскалации: <b>{len(escalations)}</b>",
+            f"🚨 Эскалации: <b>{len(escalations)}</b>\n"
+            f"⚠️ Минимальный риск: <b>{len(min_risk_apps)}</b>",
             reply_markup=self.kb.main_menu(),
             parse_mode="HTML"
         )
@@ -162,6 +167,26 @@ class SupervisorHandlers:
                 f"🚨 <b>Эскалации</b> ({len(applications)})\n\n"
                 "Заявки, требующие особого внимания:",
                 reply_markup=self.kb.applications_list(applications, "escalations"),
+                parse_mode="HTML"
+            )
+        await callback.answer()
+
+    async def cb_min_risk(self, callback: CallbackQuery, db_user):
+        """Заявки с минимальным риском"""
+        applications = await self.application_repo.get_by_status('min_risk_review')
+
+        if not applications:
+            await callback.message.edit_text(
+                "⚠️ <b>Минимальный риск</b>\n\n"
+                "Нет заявок с минимальным риском.",
+                reply_markup=self.kb.back_to_menu(),
+                parse_mode="HTML"
+            )
+        else:
+            await callback.message.edit_text(
+                f"⚠️ <b>Минимальный риск</b> ({len(applications)})\n\n"
+                "Заявки, требующие дополнительного одобрения:",
+                reply_markup=self.kb.applications_list(applications, "min_risk"),
                 parse_mode="HTML"
             )
         await callback.answer()
@@ -254,6 +279,9 @@ class SupervisorHandlers:
             await callback.answer("Заявка не найдена", show_alert=True)
             return
 
+        # Проверяем, это заявка с минимальным риском или обычная
+        is_min_risk = app.status == 'min_risk_review'
+
         # Одобряем этап супервайзера
         pending_approval = await self.approval_repo.get_by_role(app_id, 'supervisor')
         if pending_approval and not pending_approval.decision:
@@ -263,6 +291,34 @@ class SupervisorHandlers:
         for approval in app.approvals:
             if approval.sequence == 0 and not approval.decision:
                 await self.approval_repo.approve(approval.id, db_user.id, "Одобрено руководителем")
+
+        # Если это заявка с минимальным риском - переводим в awaiting_contract_details
+        # и отправляем уведомления клиенту
+        if is_min_risk:
+            await self.application_repo.update_status(app_id, 'awaiting_contract_details')
+
+            await self.log_repo.create_log(
+                action='supervisor_approved_min_risk',
+                application_id=app_id,
+                user_id=db_user.id
+            )
+
+            await callback.message.edit_text(
+                f"✅ <b>Минимальный риск одобрен!</b>\n\n"
+                f"📋 {app.external_id}\n"
+                f"💰 {app.amount:,.0f}₽\n\n"
+                f"📝 Клиенту отправлен запрос на данные договора.",
+                reply_markup=self.kb.back_to_menu(),
+                parse_mode="HTML"
+            )
+            await callback.answer("Минимальный риск одобрен!")
+
+            if self.notification_service:
+                # Отправляем клиенту уведомление об одобрении банком
+                await self.notification_service.notify_client_approved_by_bank(app)
+                # Запрашиваем данные договора
+                await self.notification_service.notify_client_contract_details_needed(app)
+            return
 
         # Проверяем, все ли подписи собраны
         all_approved = await self.approval_repo.is_all_approved(app_id)
@@ -531,6 +587,7 @@ class SupervisorHandlers:
             'primary_check': '🔍 Проверка',
             'manager_review': '👔 У менеджера',
             'bank_review': '🏦 В банке',
+            'min_risk_review': '⚠️ Минимальный риск',
             'awaiting_contract_details': '📝 Ожидание данных договора',
             'supervisor_review': '👑 На одобрении',
             'approved': '✅ Одобрена',
@@ -549,6 +606,29 @@ class SupervisorHandlers:
 
         text += f"📝 Назначение: {app.purpose}\n"
         text += f"📅 Создана: {app.created_at.strftime('%d.%m.%Y %H:%M')}\n"
+
+        # Риск ЦБ РФ и госзакупки из primary_check
+        if app.primary_check_result:
+            from services.honest_business_api import format_cbr_rating, format_amount_short
+
+            check_result = app.primary_check_result
+            cbr_risk = check_result.get('cbr_risk')
+
+            text += "\n"
+            if cbr_risk:
+                cbr_text = format_cbr_rating(cbr_risk)
+                # Сокращенный формат для карточки
+                lines = cbr_text.split('\n')
+                text += lines[0] + "\n"  # Только заголовок с уровнем риска
+
+            # Госзакупки
+            zakupki = check_result.get('zakupki')
+            if zakupki and zakupki.get('count', 0) > 0:
+                count = zakupki['count']
+                total_sum = zakupki.get('total_sum', 0)
+                text += f"⚠️ <b>Госзакупки:</b> {count} контр. на {format_amount_short(total_sum)}\n"
+            elif zakupki is not None:
+                text += "✅ <b>Госзакупки:</b> проверка пройдена\n"
 
         if app.company:
             text += f"\n🏢 <b>Компания:</b> {app.company.name}\n"

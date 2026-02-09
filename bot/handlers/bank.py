@@ -301,21 +301,21 @@ class BankHandlers:
                 reason='Минимальный риск - требуется решение руководителя',
                 sequence=0
             )
-            # Ожидаем данные договора от клиента
-            await self.application_repo.update_status(app_id, 'awaiting_contract_details')
+            # Переводим в статус min_risk_review (ожидание проверки супервайзером)
+            await self.application_repo.update_status(app_id, 'min_risk_review')
 
             await callback.message.edit_text(
                 f"⚠️ <b>Минимальный риск</b>\n\n"
                 f"📋 {app.external_id}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
                 f"👤 Оценил: {employee_name}\n"
-                f"📝 Клиенту отправлен запрос на данные договора.",
+                f"📝 Отправлено на проверку супервайзеру.",
                 parse_mode="HTML"
             )
-            await callback.answer("Одобрено банком")
+            await callback.answer("Отправлено на проверку супервайзеру")
 
             if self.notification_service:
-                await self.notification_service.notify_client_contract_details_needed(app)
+                await self.notification_service.notify_supervisors_escalation(app, "банк (минимальный риск)")
         else:
             # Без риска - ожидаем данные договора от клиента
             await self.application_repo.update_status(app_id, 'awaiting_contract_details')

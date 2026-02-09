@@ -52,6 +52,10 @@ class LogicService:
                 zakupki = check_result.get('zakupki')
                 has_gov_contracts = zakupki is not None and zakupki.get('count', 0) > 0
 
+                # Получаем уровень риска ЦБ РФ
+                cbr_risk = check_result.get('cbr_risk', {})
+                cbr_risk_level = cbr_risk.get('level') if cbr_risk else None
+
                 await self.application_repo.update_primary_check(
                     app.id,
                     status='completed' if not has_errors else 'partial',
@@ -63,6 +67,7 @@ class LogicService:
                         'has_gov_contracts': has_gov_contracts,
                         'gov_contracts_count': zakupki.get('count', 0) if zakupki else 0,
                         'gov_contracts_sum': zakupki.get('total_sum', 0) if zakupki else 0,
+                        'cbr_risk_level': cbr_risk_level,  # success, warning, danger
                     }
                 )
                 # Обновляем данные плательщика из ЗЧБ
