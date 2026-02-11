@@ -46,9 +46,14 @@ class SupervisorKeyboards:
                 'bank_review': '🏦'
             }.get(app.status, '📋')
 
+            # Название компании или ИНН (обрезаем до 35 символов если длинное)
+            company_name = app.payer_name or f"ИНН {app.payer_inn}"
+            if len(company_name) > 35:
+                company_name = company_name[:32] + "..."
+
             builder.row(
                 InlineKeyboardButton(
-                    text=f"{status_emoji} {app.external_id} | {app.amount:,.0f}₽",
+                    text=f"{status_emoji} {company_name} | {app.amount:,.0f}₽",
                     callback_data=f"sv:app:{app.id}"
                 )
             )
