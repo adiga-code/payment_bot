@@ -915,10 +915,11 @@ class AdminHandlers:
             await state.update_data(company_id=company_id)
             await callback.message.answer(
                 "📤 <b>Загрузка подписи и печати</b>\n\n"
-                "Отправьте изображение в формате PNG с подписью и печатью компании.\n\n"
+                "Отправьте файл PNG с подписью и печатью компании.\n\n"
                 "⚠️ Требования:\n"
                 "• Формат: PNG\n"
                 "• Размер: до 5 МБ\n"
+                "• Отправить как ДОКУМЕНТ (📎), не как фото!\n"
                 "• Подпись и печать на одном изображении",
                 reply_markup=self.kb.back_to_menu(),
                 parse_mode="HTML"
@@ -1034,9 +1035,16 @@ class AdminHandlers:
         import os
         from pathlib import Path
 
-        # Проверяем что это фото
-        if not message.photo:
-            await message.answer("❌ Пожалуйста, отправьте изображение")
+        # Проверяем что это документ
+        if not message.document:
+            await message.answer("❌ Пожалуйста, отправьте файл как документ (не как фото)")
+            return
+
+        document = message.document
+
+        # Проверяем что это PNG
+        if not document.file_name.lower().endswith('.png'):
+            await message.answer("❌ Файл должен быть в формате PNG")
             return
 
         # Получаем company_id из состояния
@@ -1048,11 +1056,8 @@ class AdminHandlers:
             await state.clear()
             return
 
-        # Получаем самое большое фото (лучшее качество)
-        photo = message.photo[-1]
-
         # Проверяем размер (5 МБ = 5242880 байт)
-        if photo.file_size > 5242880:
+        if document.file_size > 5242880:
             await message.answer("❌ Файл слишком большой. Максимум 5 МБ.")
             return
 
@@ -1065,8 +1070,7 @@ class AdminHandlers:
             file_path = signatures_dir / f"company_{company_id}_signature.png"
 
             # Скачиваем файл
-            from bot import PaymentBot  # Нужен доступ к боту
-            file = await message.bot.get_file(photo.file_id)
+            file = await message.bot.get_file(document.file_id)
             await message.bot.download_file(file.file_path, file_path)
 
             # Сохраняем путь в БД
