@@ -36,6 +36,7 @@ class AdminStates(StatesGroup):
     editing_company_limit = State()
     waiting_company_bank_account = State()  # Ввод номера счёта при привязке банка
     editing_company_bank_account = State()  # Редактирование номера счёта
+    waiting_company_signature = State()  # Ожидание загрузки подписи и печати
 
     # Банки
     waiting_bank_name = State()
@@ -770,7 +771,11 @@ class AdminHandlers:
                 f"📅 Дневной: {company.current_daily_used:,.0f} / {company.daily_limit:,.0f}₽ (осталось {daily_left:,.0f}₽)\n"
                 f"📆 Недельный: {company.current_weekly_used:,.0f} / {company.weekly_limit:,.0f}₽\n"
                 f"🗓️ Месячный: {company.current_monthly_used:,.0f} / {company.monthly_limit:,.0f}₽",
-                reply_markup=self.kb.company_actions(company.id, company.is_active),
+                reply_markup=self.kb.company_actions(
+                    company.id,
+                    company.is_active,
+                    has_signature=bool(company.signature_image_path)
+                ),
                 parse_mode="HTML"
             )
             await callback.answer()
@@ -861,15 +866,24 @@ class AdminHandlers:
             await callback.answer("🚫 Компания деактивирована")
             company = await self.company_repo.get_by_id(company_id)
             await callback.message.edit_reply_markup(
-                reply_markup=self.kb.company_actions(company_id, False)
+                reply_markup=self.kb.company_actions(
+                    company_id,
+                    False,
+                    has_signature=bool(company.signature_image_path)
+                )
             )
 
         # Активация
         elif action == "activate":
             await self.company_repo.update_by_id(company_id, is_active=True)
             await callback.answer("✅ Компания активирована")
+            company = await self.company_repo.get_by_id(company_id)
             await callback.message.edit_reply_markup(
-                reply_markup=self.kb.company_actions(company_id, True)
+                reply_markup=self.kb.company_actions(
+                    company_id,
+                    True,
+                    has_signature=bool(company.signature_image_path)
+                )
             )
 
         # Удаление
