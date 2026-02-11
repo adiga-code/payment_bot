@@ -40,6 +40,7 @@ class SupervisorKeyboards:
         for app in page_apps:
             status_emoji = {
                 'supervisor_review': '🔴',
+                'min_risk_review': '⚠️',
                 'approved': '✅',
                 'rejected': '❌',
                 'bank_review': '🏦'
@@ -71,7 +72,7 @@ class SupervisorKeyboards:
         return builder.as_markup()
 
     @staticmethod
-    def application_actions(app_id: int, is_escalation: bool = False) -> InlineKeyboardMarkup:
+    def application_actions(app_id: int, is_escalation: bool = False, back_to: str = "pending") -> InlineKeyboardMarkup:
         """Действия с заявкой"""
         builder = InlineKeyboardBuilder()
 
@@ -95,7 +96,7 @@ class SupervisorKeyboards:
             )
 
         builder.row(
-            InlineKeyboardButton(text="🔙 К списку", callback_data="sv:pending")
+            InlineKeyboardButton(text="🔙 К списку", callback_data=f"sv:{back_to}")
         )
         return builder.as_markup()
 
@@ -105,10 +106,11 @@ class SupervisorKeyboards:
         builder = InlineKeyboardBuilder()
 
         reasons = [
-            ("Высокий риск", "high_risk"),
-            ("Недостаточно данных", "insufficient_data"),
-            ("Превышение лимитов", "limit_exceeded"),
-            ("Другая причина", "other")
+            ("Недостаточно информации о компании", "insufficient_info"),
+            ("Сомнительная деловая репутация", "bad_reputation"),
+            ("Не соответствует политике банка", "policy_violation"),
+            ("Риски по госзакупкам", "gov_contracts_risk"),
+            ("Другое", "other")
         ]
 
         for text, reason in reasons:
