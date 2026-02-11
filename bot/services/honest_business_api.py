@@ -288,25 +288,35 @@ def format_cbr_rating(cbr_data: dict | None) -> str:
     # Показываем факторы риска
     facts = cbr_data.get('facts', {})
 
-    # Критические факторы
-    danger_facts = facts.get('danger', [])
-    if danger_facts:
-        lines.append('\n<b>Критические факторы:</b>')
-        for fact in danger_facts[:5]:  # Первые 5
-            name_fact = fact.get('name', '')
-            value = fact.get('value', '')
-            if name_fact:
-                lines.append(f'  🔴 {name_fact}: {value}')
+    # Обработка facts - может быть dict или list
+    if isinstance(facts, dict):
+        # Критические факторы
+        danger_facts = facts.get('danger', [])
+        if danger_facts:
+            lines.append('\n<b>Критические факторы:</b>')
+            for fact in danger_facts[:5]:  # Первые 5
+                name_fact = fact.get('name', '')
+                value = fact.get('value', '')
+                if name_fact:
+                    lines.append(f'  🔴 {name_fact}: {value}')
 
-    # Предупреждения
-    warning_facts = facts.get('warning', [])
-    if warning_facts:
-        lines.append('\n<b>Предупреждения:</b>')
-        for fact in warning_facts[:5]:  # Первые 5
-            name_fact = fact.get('name', '')
-            value = fact.get('value', '')
-            if name_fact:
-                lines.append(f'  🟡 {name_fact}: {value}')
+        # Предупреждения
+        warning_facts = facts.get('warning', [])
+        if warning_facts:
+            lines.append('\n<b>Предупреждения:</b>')
+            for fact in warning_facts[:5]:  # Первые 5
+                name_fact = fact.get('name', '')
+                value = fact.get('value', '')
+                if name_fact:
+                    lines.append(f'  🟡 {name_fact}: {value}')
+    elif isinstance(facts, list):
+        # Если facts это список факторов
+        if facts:
+            lines.append('\n<b>Предупреждения:</b>')
+            for fact in facts[:5]:  # Первые 5
+                name_fact = fact.get('name', '') if isinstance(fact, dict) else str(fact)
+                if name_fact:
+                    lines.append(f'  🟡 {name_fact}')
 
     return '\n'.join(lines)
 
