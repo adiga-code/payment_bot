@@ -99,6 +99,9 @@ class Company(Base):
     cbr_risk_facts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cbr_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Подпись и печать
+    signature_image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

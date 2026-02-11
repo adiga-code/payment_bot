@@ -106,6 +106,9 @@ class ZCBService:
         if not item:
             return None
 
+        # Логируем что вернул API для отладки
+        logger.info(f"ZCB search result for {inn}: {item}")
+
         return {
             'ogrn': item.get('id') or item.get('ogrn'),
             'inn': item.get('inn', inn),

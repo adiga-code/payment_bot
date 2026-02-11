@@ -145,6 +145,13 @@ class DocumentService:
         # Дата оплаты — +3 дня
         pay_by = now + timedelta(days=3)
 
+        # Путь к подписи компании
+        signature_path = None
+        if co and co.signature_image_path:
+            signature_path = co.signature_image_path
+        elif co:
+            logger.warning(f"Company {co.id} ({co.name}) has no signature - invoice will be generated without signature")
+
         # Контекст для шаблона
         context = {
             'invoice_number': invoice_number,
@@ -158,6 +165,7 @@ class DocumentService:
             'vat': _format_amount(nds),
             'total_words': amount_to_words(amount),
             'payment_deadline': pay_by.strftime('%d.%m.%Y'),
+            'signature_path': signature_path,
         }
 
         # Генерируем PDF

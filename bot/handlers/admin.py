@@ -36,6 +36,7 @@ class AdminStates(StatesGroup):
     editing_company_limit = State()
     waiting_company_bank_account = State()  # Ввод номера счёта при привязке банка
     editing_company_bank_account = State()  # Редактирование номера счёта
+    waiting_company_signature = State()  # Ожидание загрузки подписи и печати
 
     # Банки
     waiting_bank_name = State()
@@ -121,6 +122,7 @@ class AdminHandlers:
         self.router.message(AdminStates.editing_company_limit)(self.process_edit_company_limit)
         self.router.message(AdminStates.waiting_company_bank_account)(self.process_company_bank_account)
         self.router.message(AdminStates.editing_company_bank_account)(self.process_edit_company_bank_account)
+        self.router.message(AdminStates.waiting_company_signature)(self.process_company_signature)
 
         # ===== БАНКИ =====
         self.router.callback_query(F.data == "admin:banks")(self.cb_banks_menu)
@@ -770,7 +772,11 @@ class AdminHandlers:
                 f"📅 Дневной: {company.current_daily_used:,.0f} / {company.daily_limit:,.0f}₽ (осталось {daily_left:,.0f}₽)\n"
                 f"📆 Недельный: {company.current_weekly_used:,.0f} / {company.weekly_limit:,.0f}₽\n"
                 f"🗓️ Месячный: {company.current_monthly_used:,.0f} / {company.monthly_limit:,.0f}₽",
-                reply_markup=self.kb.company_actions(company.id, company.is_active),
+                reply_markup=self.kb.company_actions(
+                    company.id,
+                    company.is_active,
+                    has_signature=bool(company.signature_image_path)
+                ),
                 parse_mode="HTML"
             )
             await callback.answer()
@@ -861,15 +867,24 @@ class AdminHandlers:
             await callback.answer("🚫 Компания деактивирована")
             company = await self.company_repo.get_by_id(company_id)
             await callback.message.edit_reply_markup(
-                reply_markup=self.kb.company_actions(company_id, False)
+                reply_markup=self.kb.company_actions(
+                    company_id,
+                    False,
+                    has_signature=bool(company.signature_image_path)
+                )
             )
 
         # Активация
         elif action == "activate":
             await self.company_repo.update_by_id(company_id, is_active=True)
             await callback.answer("✅ Компания активирована")
+            company = await self.company_repo.get_by_id(company_id)
             await callback.message.edit_reply_markup(
-                reply_markup=self.kb.company_actions(company_id, True)
+                reply_markup=self.kb.company_actions(
+                    company_id,
+                    True,
+                    has_signature=bool(company.signature_image_path)
+                )
             )
 
         # Удаление
@@ -893,6 +908,63 @@ class AdminHandlers:
                 reply_markup=self.kb.back_to_menu()
             )
             await callback.answer()
+
+        # Загрузка подписи
+        elif action == "upload_signature":
+            await state.set_state(AdminStates.waiting_company_signature)
+            await state.update_data(company_id=company_id)
+            await callback.message.answer(
+                "📤 <b>Загрузка подписи и печати</b>\n\n"
+                "Отправьте изображение в формате PNG с подписью и печатью компании.\n\n"
+                "⚠️ Требования:\n"
+                "• Формат: PNG\n"
+                "• Размер: до 5 МБ\n"
+                "• Подпись и печать на одном изображении",
+                reply_markup=self.kb.back_to_menu(),
+                parse_mode="HTML"
+            )
+            await callback.answer()
+
+        # Просмотр подписи
+        elif action == "view_signature":
+            company = await self.company_repo.get_by_id(company_id)
+            if not company.signature_image_path:
+                await callback.answer("❌ Подпись не загружена", show_alert=True)
+                return
+
+            try:
+                from aiogram.types import FSInputFile
+                photo = FSInputFile(company.signature_image_path)
+                await callback.message.answer_photo(
+                    photo=photo,
+                    caption=f"🖼️ Подпись и печать\n🏢 {company.name}"
+                )
+                await callback.answer()
+            except Exception as e:
+                await callback.answer(f"❌ Ошибка загрузки: {e}", show_alert=True)
+
+        # Удаление подписи
+        elif action == "delete_signature":
+            company = await self.company_repo.get_by_id(company_id)
+            if company.signature_image_path:
+                import os
+                # Удаляем файл
+                if os.path.exists(company.signature_image_path):
+                    os.remove(company.signature_image_path)
+                # Обнуляем путь в БД
+                await self.company_repo.update_by_id(company_id, signature_image_path=None)
+                await callback.answer("✅ Подпись удалена")
+                # Обновляем клавиатуру
+                company = await self.company_repo.get_by_id(company_id)
+                await callback.message.edit_reply_markup(
+                    reply_markup=self.kb.company_actions(
+                        company_id,
+                        company.is_active,
+                        has_signature=False
+                    )
+                )
+            else:
+                await callback.answer("❌ Подпись не загружена", show_alert=True)
 
     async def process_edit_company_name(self, message: Message, state: FSMContext, db_user):
         """Редактирование названия компании"""
@@ -956,6 +1028,65 @@ class AdminHandlers:
             reply_markup=self.kb.back_to_menu(),
             parse_mode="HTML"
         )
+
+    async def process_company_signature(self, message: Message, state: FSMContext, db_user):
+        """Обработка загруженной подписи"""
+        import os
+        from pathlib import Path
+
+        # Проверяем что это фото
+        if not message.photo:
+            await message.answer("❌ Пожалуйста, отправьте изображение")
+            return
+
+        # Получаем company_id из состояния
+        data = await state.get_data()
+        company_id = data.get('company_id')
+
+        if not company_id:
+            await message.answer("❌ Ошибка: не найден ID компании")
+            await state.clear()
+            return
+
+        # Получаем самое большое фото (лучшее качество)
+        photo = message.photo[-1]
+
+        # Проверяем размер (5 МБ = 5242880 байт)
+        if photo.file_size > 5242880:
+            await message.answer("❌ Файл слишком большой. Максимум 5 МБ.")
+            return
+
+        try:
+            # Создаем папку для подписей если не существует
+            signatures_dir = Path("documents/signatures")
+            signatures_dir.mkdir(parents=True, exist_ok=True)
+
+            # Формируем путь к файлу
+            file_path = signatures_dir / f"company_{company_id}_signature.png"
+
+            # Скачиваем файл
+            from bot import PaymentBot  # Нужен доступ к боту
+            file = await message.bot.get_file(photo.file_id)
+            await message.bot.download_file(file.file_path, file_path)
+
+            # Сохраняем путь в БД
+            await self.company_repo.update_by_id(
+                company_id,
+                signature_image_path=str(file_path)
+            )
+
+            await state.clear()
+
+            await message.answer(
+                "✅ <b>Подпись и печать загружены!</b>\n\n"
+                "Теперь они будут автоматически добавляться в счета и договоры.",
+                reply_markup=self.kb.back_to_menu(),
+                parse_mode="HTML"
+            )
+
+        except Exception as e:
+            await message.answer(f"❌ Ошибка при загрузке: {e}")
+            await state.clear()
 
     # ==================== БАНКОВСКИЕ СЧЕТА КОМПАНИИ ====================
 

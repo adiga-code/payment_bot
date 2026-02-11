@@ -73,6 +73,9 @@ CREATE TABLE companies (
     cbr_risk_facts JSONB,
     cbr_checked_at TIMESTAMP,
 
+    -- Подпись и печать
+    signature_image_path VARCHAR(500),
+
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
