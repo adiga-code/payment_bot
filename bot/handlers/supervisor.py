@@ -257,9 +257,11 @@ class SupervisorHandlers:
             for a in app.approvals
         )
 
-        # Показываем кнопки только если заявка на рассмотрении
+        # Показываем кнопки в зависимости от статуса
         if app.status == 'supervisor_review':
-            keyboard = self.kb.application_actions(app_id, is_escalation)
+            keyboard = self.kb.application_actions(app_id, is_escalation, back_to="pending")
+        elif app.status == 'min_risk_review':
+            keyboard = self.kb.application_actions(app_id, is_escalation=False, back_to="min_risk")
         else:
             keyboard = self.kb.back_to_menu()
 
@@ -410,9 +412,10 @@ class SupervisorHandlers:
         reason_code = parts[3]
 
         reasons_map = {
-            'high_risk': 'Высокий риск',
-            'insufficient_data': 'Недостаточно данных',
-            'limit_exceeded': 'Превышение лимитов',
+            'insufficient_info': 'Недостаточно информации о компании',
+            'bad_reputation': 'Сомнительная деловая репутация',
+            'policy_violation': 'Не соответствует политике банка',
+            'gov_contracts_risk': 'Риски по госзакупкам',
             'other': None
         }
 
@@ -574,6 +577,13 @@ class SupervisorHandlers:
             application_id=app.id,
             user_id=db_user.id,
             details={'reason': reason}
+        )
+
+        # Уведомляем клиента об отклонении
+        await self.notification_service.notify_client_rejected(
+            app,
+            reason=reason,
+            rejected_by="Руководитель"
         )
 
         if self.notification_service:

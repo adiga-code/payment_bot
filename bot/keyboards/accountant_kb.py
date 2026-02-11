@@ -127,9 +127,14 @@ class AccountantKeyboards:
         page_apps = applications[start:end]
 
         for app in page_apps:
+            # Название компании или ИНН (обрезаем до 35 символов если длинное)
+            company_name = app.payer_name or f"ИНН {app.payer_inn}"
+            if len(company_name) > 35:
+                company_name = company_name[:32] + "..."
+
             builder.row(
                 InlineKeyboardButton(
-                    text=f"💰 {app.external_id} | {app.amount:,.0f}₽",
+                    text=f"💰 {company_name} | {app.amount:,.0f}₽",
                     callback_data=f"acc:check_payment:{app.id}"
                 )
             )
