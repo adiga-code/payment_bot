@@ -36,7 +36,8 @@ class AdminStates(StatesGroup):
     editing_company_limit = State()
     waiting_company_bank_account = State()  # Ввод номера счёта при привязке банка
     editing_company_bank_account = State()  # Редактирование номера счёта
-    waiting_company_signature = State()  # Ожидание загрузки подписи и печати
+    waiting_company_signature = State()  # Ожидание загрузки подписи
+    waiting_company_stamp = State()  # Ожидание загрузки печати
 
     # Банки
     waiting_bank_name = State()
@@ -123,6 +124,7 @@ class AdminHandlers:
         self.router.message(AdminStates.waiting_company_bank_account)(self.process_company_bank_account)
         self.router.message(AdminStates.editing_company_bank_account)(self.process_edit_company_bank_account)
         self.router.message(AdminStates.waiting_company_signature)(self.process_company_signature)
+        self.router.message(AdminStates.waiting_company_stamp)(self.process_company_stamp)
 
         # ===== БАНКИ =====
         self.router.callback_query(F.data == "admin:banks")(self.cb_banks_menu)
@@ -775,7 +777,8 @@ class AdminHandlers:
                 reply_markup=self.kb.company_actions(
                     company.id,
                     company.is_active,
-                    has_signature=bool(company.signature_image_path)
+                    has_signature=bool(company.signature_image_path),
+                    has_stamp=bool(company.stamp_image_path)
                 ),
                 parse_mode="HTML"
             )
@@ -870,7 +873,8 @@ class AdminHandlers:
                 reply_markup=self.kb.company_actions(
                     company_id,
                     False,
-                    has_signature=bool(company.signature_image_path)
+                    has_signature=bool(company.signature_image_path),
+                    has_stamp=bool(company.stamp_image_path)
                 )
             )
 
@@ -883,7 +887,8 @@ class AdminHandlers:
                 reply_markup=self.kb.company_actions(
                     company_id,
                     True,
-                    has_signature=bool(company.signature_image_path)
+                    has_signature=bool(company.signature_image_path),
+                    has_stamp=bool(company.stamp_image_path)
                 )
             )
 
@@ -914,13 +919,30 @@ class AdminHandlers:
             await state.set_state(AdminStates.waiting_company_signature)
             await state.update_data(company_id=company_id)
             await callback.message.answer(
-                "📤 <b>Загрузка подписи и печати</b>\n\n"
-                "Отправьте файл PNG с подписью и печатью компании.\n\n"
+                "📤 <b>Загрузка подписи</b>\n\n"
+                "Отправьте файл PNG с подписью (росчерк).\n\n"
                 "⚠️ Требования:\n"
                 "• Формат: PNG\n"
                 "• Размер: до 5 МБ\n"
                 "• Отправить как ДОКУМЕНТ (📎), не как фото!\n"
-                "• Подпись и печать на одном изображении",
+                "• Рекомендуемая ширина: 2 см",
+                reply_markup=self.kb.back_to_menu(),
+                parse_mode="HTML"
+            )
+            await callback.answer()
+
+        # Загрузка печати
+        elif action == "upload_stamp":
+            await state.set_state(AdminStates.waiting_company_stamp)
+            await state.update_data(company_id=company_id)
+            await callback.message.answer(
+                "📤 <b>Загрузка печати</b>\n\n"
+                "Отправьте файл PNG с круглой печатью компании.\n\n"
+                "⚠️ Требования:\n"
+                "• Формат: PNG\n"
+                "• Размер: до 5 МБ\n"
+                "• Отправить как ДОКУМЕНТ (📎), не как фото!\n"
+                "• Рекомендуемый диаметр: 4 см",
                 reply_markup=self.kb.back_to_menu(),
                 parse_mode="HTML"
             )
@@ -961,11 +983,54 @@ class AdminHandlers:
                     reply_markup=self.kb.company_actions(
                         company_id,
                         company.is_active,
-                        has_signature=False
+                        has_signature=False,
+                        has_stamp=bool(company.stamp_image_path)
                     )
                 )
             else:
                 await callback.answer("❌ Подпись не загружена", show_alert=True)
+
+        # Просмотр печати
+        elif action == "view_stamp":
+            company = await self.company_repo.get_by_id(company_id)
+            if not company.stamp_image_path:
+                await callback.answer("❌ Печать не загружена", show_alert=True)
+                return
+
+            try:
+                from aiogram.types import FSInputFile
+                photo = FSInputFile(company.stamp_image_path)
+                await callback.message.answer_photo(
+                    photo=photo,
+                    caption=f"🖼️ Печать\n🏢 {company.name}"
+                )
+                await callback.answer()
+            except Exception as e:
+                await callback.answer(f"❌ Ошибка загрузки: {e}", show_alert=True)
+
+        # Удаление печати
+        elif action == "delete_stamp":
+            company = await self.company_repo.get_by_id(company_id)
+            if company.stamp_image_path:
+                import os
+                # Удаляем файл
+                if os.path.exists(company.stamp_image_path):
+                    os.remove(company.stamp_image_path)
+                # Обнуляем путь в БД
+                await self.company_repo.update_by_id(company_id, stamp_image_path=None)
+                await callback.answer("✅ Печать удалена")
+                # Обновляем клавиатуру
+                company = await self.company_repo.get_by_id(company_id)
+                await callback.message.edit_reply_markup(
+                    reply_markup=self.kb.company_actions(
+                        company_id,
+                        company.is_active,
+                        has_signature=bool(company.signature_image_path),
+                        has_stamp=False
+                    )
+                )
+            else:
+                await callback.answer("❌ Печать не загружена", show_alert=True)
 
     async def process_edit_company_name(self, message: Message, state: FSMContext, db_user):
         """Редактирование названия компании"""
@@ -1085,8 +1150,73 @@ class AdminHandlers:
             await state.clear()
 
             await message.answer(
-                "✅ <b>Подпись и печать загружены!</b>\n\n"
-                "Теперь они будут автоматически добавляться в счета и договоры.",
+                "✅ <b>Подпись загружена!</b>\n\n"
+                "Теперь она будет автоматически добавляться в счета.",
+                reply_markup=self.kb.back_to_menu(),
+                parse_mode="HTML"
+            )
+
+        except Exception as e:
+            await message.answer(f"❌ Ошибка при загрузке: {e}")
+            await state.clear()
+
+    async def process_company_stamp(self, message: Message, state: FSMContext, db_user):
+        """Обработка загруженной печати"""
+        import os
+        from pathlib import Path
+
+        # Проверяем что это документ
+        if not message.document:
+            await message.answer("❌ Пожалуйста, отправьте файл как документ (не как фото)")
+            return
+
+        document = message.document
+
+        # Проверяем что это PNG
+        if not document.file_name.lower().endswith('.png'):
+            await message.answer("❌ Файл должен быть в формате PNG")
+            return
+
+        # Получаем company_id из состояния
+        data = await state.get_data()
+        company_id = data.get('company_id')
+
+        if not company_id:
+            await message.answer("❌ Ошибка: не найден ID компании")
+            await state.clear()
+            return
+
+        # Проверяем размер (5 МБ = 5242880 байт)
+        if document.file_size > 5242880:
+            await message.answer("❌ Файл слишком большой. Максимум 5 МБ.")
+            return
+
+        try:
+            # Создаем папку для печатей если не существует
+            # Используем абсолютный путь относительно корня проекта (/app в Docker)
+            import os
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # /app
+            stamps_dir = Path(base_dir) / "documents" / "stamps"
+            stamps_dir.mkdir(parents=True, exist_ok=True)
+
+            # Формируем путь к файлу
+            file_path = stamps_dir / f"company_{company_id}_stamp.png"
+
+            # Скачиваем файл
+            file = await message.bot.get_file(document.file_id)
+            await message.bot.download_file(file.file_path, file_path)
+
+            # Сохраняем путь в БД
+            await self.company_repo.update_by_id(
+                company_id,
+                stamp_image_path=str(file_path)
+            )
+
+            await state.clear()
+
+            await message.answer(
+                "✅ <b>Печать загружена!</b>\n\n"
+                "Теперь она будет автоматически добавляться в счета.",
                 reply_markup=self.kb.back_to_menu(),
                 parse_mode="HTML"
             )

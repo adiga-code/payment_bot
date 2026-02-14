@@ -179,6 +179,40 @@ class DocumentService:
         elif co:
             logger.warning(f"Company {co.id} ({co.name}) has no signature - invoice will be generated without signature")
 
+        # Путь к печати компании (конвертируем в абсолютный)
+        stamp_path = None
+        if co and co.stamp_image_path:
+            # Если путь относительный - делаем абсолютным
+            st_path = co.stamp_image_path
+            logger.info(f"[STAMP DEBUG] Original path from DB: {st_path}")
+
+            if not os.path.isabs(st_path):
+                # Относительный путь от корня проекта
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                logger.info(f"[STAMP DEBUG] Project root: {project_root}")
+                st_path = os.path.join(project_root, st_path)
+                logger.info(f"[STAMP DEBUG] Joined path: {st_path}")
+
+            # Проверяем что файл существует
+            if os.path.exists(st_path):
+                stamp_path = os.path.abspath(st_path)
+                logger.info(f"[STAMP DEBUG] ✅ File exists! Absolute path: {stamp_path}")
+            else:
+                logger.error(f"[STAMP DEBUG] ❌ File NOT found at: {st_path}")
+                # Попробуем найти файл в других местах для отладки
+                alt_paths = [
+                    os.path.join('/app', st_path),
+                    os.path.join('/app/documents/stamps', os.path.basename(st_path)),
+                    st_path
+                ]
+                for alt_path in alt_paths:
+                    if os.path.exists(alt_path):
+                        logger.info(f"[STAMP DEBUG] Found file at alternative path: {alt_path}")
+                        stamp_path = os.path.abspath(alt_path)
+                        break
+        elif co:
+            logger.warning(f"Company {co.id} ({co.name}) has no stamp - invoice will be generated without stamp")
+
         # Контекст для шаблона
         context = {
             'invoice_number': invoice_number,
@@ -193,6 +227,7 @@ class DocumentService:
             'total_words': amount_to_words(amount),
             'payment_deadline': pay_by.strftime('%d.%m.%Y'),
             'signature_path': signature_path,
+            'stamp_path': stamp_path,
         }
 
         # Генерируем PDF

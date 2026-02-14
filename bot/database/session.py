@@ -118,3 +118,9 @@ class DatabaseManager:
                 "ALTER TABLE applications ADD COLUMN IF NOT EXISTS "
                 "invoice_purpose TEXT"
             ))
+
+            # Печать компании
+            await conn.execute(text(
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
+                "stamp_image_path VARCHAR(500)"
+            ))
