@@ -145,10 +145,22 @@ class DocumentService:
         # Дата оплаты — +3 дня
         pay_by = now + timedelta(days=3)
 
-        # Путь к подписи компании
+        # Путь к подписи компании (конвертируем в абсолютный)
         signature_path = None
         if co and co.signature_image_path:
-            signature_path = co.signature_image_path
+            # Если путь относительный - делаем абсолютным
+            sig_path = co.signature_image_path
+            if not os.path.isabs(sig_path):
+                # Относительный путь от корня проекта
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                sig_path = os.path.join(project_root, sig_path)
+
+            # Проверяем что файл существует
+            if os.path.exists(sig_path):
+                signature_path = os.path.abspath(sig_path)
+                logger.info(f"Using signature for company {co.id}: {signature_path}")
+            else:
+                logger.warning(f"Signature file not found for company {co.id}: {sig_path}")
         elif co:
             logger.warning(f"Company {co.id} ({co.name}) has no signature - invoice will be generated without signature")
 
