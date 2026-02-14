@@ -34,6 +34,7 @@ class AdminStates(StatesGroup):
     editing_company_name = State()
     editing_company_inn = State()
     editing_company_limit = State()
+    editing_company_director_name = State()  # Редактирование ФИО директора
     waiting_company_bank_account = State()  # Ввод номера счёта при привязке банка
     editing_company_bank_account = State()  # Редактирование номера счёта
     waiting_company_signature = State()  # Ожидание загрузки подписи
@@ -120,6 +121,7 @@ class AdminHandlers:
         self.router.message(AdminStates.waiting_company_daily_limit)(self.process_company_daily_limit)
         self.router.message(AdminStates.editing_company_name)(self.process_edit_company_name)
         self.router.message(AdminStates.editing_company_inn)(self.process_edit_company_inn)
+        self.router.message(AdminStates.editing_company_director_name)(self.process_edit_company_director_name)
         self.router.message(AdminStates.editing_company_limit)(self.process_edit_company_limit)
         self.router.message(AdminStates.waiting_company_bank_account)(self.process_company_bank_account)
         self.router.message(AdminStates.editing_company_bank_account)(self.process_edit_company_bank_account)
@@ -807,6 +809,23 @@ class AdminHandlers:
             )
             await callback.answer()
 
+        # Редактирование ФИО директора
+        elif action == "edit" and parts[1] == "director":
+            await state.set_state(AdminStates.editing_company_director_name)
+            await state.update_data(editing_company_id=company_id)
+            company = await self.company_repo.get_by_id(company_id)
+            current_name = company.director_name or "не указано"
+            await callback.message.edit_text(
+                f"👤 <b>ФИО руководителя</b>\n\n"
+                f"Текущее: {current_name}\n\n"
+                f"Введите полное ФИО руководителя (минимум фамилия и имя):\n"
+                f"Например: <i>Иванов Иван Петрович</i>\n\n"
+                f"Бот автоматически преобразует в формат: <b>Иванов И.П.</b>",
+                reply_markup=self.kb.cancel_input(),
+                parse_mode="HTML"
+            )
+            await callback.answer()
+
         # Меню лимитов
         elif action == "limits":
             await callback.message.edit_text(
@@ -1062,6 +1081,56 @@ class AdminHandlers:
 
         await message.answer(
             f"✅ ИНН изменён на: <b>{inn}</b>",
+            reply_markup=self.kb.back_to_menu(),
+            parse_mode="HTML"
+        )
+
+    @staticmethod
+    def format_full_name_to_initials(full_name: str) -> str:
+        """
+        Преобразует полное ФИО в формат 'Фамилия И.О.'
+        Пример: 'Иванов Иван Петрович' -> 'Иванов И.П.'
+        """
+        parts = full_name.strip().split()
+        if len(parts) < 2:
+            return full_name  # Если меньше 2 частей, вернуть как есть
+
+        surname = parts[0]
+        name = parts[1]
+        patronymic = parts[2] if len(parts) > 2 else None
+
+        if patronymic:
+            return f"{surname} {name[0].upper()}.{patronymic[0].upper()}."
+        else:
+            return f"{surname} {name[0].upper()}."
+
+    async def process_edit_company_director_name(self, message: Message, state: FSMContext, db_user):
+        """Редактирование ФИО директора компании"""
+        full_name = message.text.strip()
+
+        # Проверка: минимум 2 слова (фамилия + имя)
+        parts = full_name.split()
+        if len(parts) < 2:
+            await message.answer(
+                "❌ Введите минимум фамилию и имя.\n"
+                "Например: <i>Иванов Иван</i> или <i>Иванов Иван Петрович</i>",
+                parse_mode="HTML"
+            )
+            return
+
+        # Преобразуем в формат "Фамилия И.О."
+        formatted_name = self.format_full_name_to_initials(full_name)
+
+        data = await state.get_data()
+        company_id = data['editing_company_id']
+
+        await self.company_repo.update_by_id(company_id, director_name=formatted_name)
+        await state.clear()
+
+        await message.answer(
+            f"✅ <b>ФИО руководителя сохранено:</b>\n\n"
+            f"Вы ввели: <i>{full_name}</i>\n"
+            f"На счёте будет: <b>{formatted_name}</b>",
             reply_markup=self.kb.back_to_menu(),
             parse_mode="HTML"
         )

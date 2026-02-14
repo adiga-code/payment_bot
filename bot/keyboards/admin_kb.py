@@ -246,6 +246,9 @@ class AdminKeyboards:
             InlineKeyboardButton(text="🔢 Изменить ИНН", callback_data=f"admin:company:edit:inn:{company_id}")
         )
         builder.row(
+            InlineKeyboardButton(text="👤 ФИО руководителя", callback_data=f"admin:company:edit:director:{company_id}")
+        )
+        builder.row(
             InlineKeyboardButton(text="💰 Лимиты", callback_data=f"admin:company:limits:{company_id}")
         )
         builder.row(
