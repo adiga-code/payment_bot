@@ -374,51 +374,78 @@ class SupervisorHandlers:
                 if invoice_number:
                     await self.notification_service.notify_accountants_invoice_ready(app, invoice_number)
         else:
-            # Просто одобряем свой этап
-            await self.application_repo.update_status(app_id, 'approved')
+            # Проверяем, проходила ли заявка банк
+            # Если нет - это эскалированная заявка, нужно отправить в банк
+            has_bank_approval = any(a.role == 'bank' for a in app.approvals)
 
-            await self.log_repo.create_log(
-                action='supervisor_approved',
-                application_id=app_id,
-                user_id=db_user.id
-            )
+            if not has_bank_approval:
+                # Эскалированная заявка - отправляем в банк
+                await self.application_repo.update_status(app_id, 'bank_review')
 
-            # Обновляем лимиты компании и банка
-            if app.company_id:
-                await self.company_repo.update_usage(app.company_id, app.amount, increment=True)
-            if app.bank_id:
-                await self.bank_repo.update_usage(app.bank_id, app.amount, increment=True)
+                await self.log_repo.create_log(
+                    action='supervisor_escalation_approved_to_bank',
+                    application_id=app_id,
+                    user_id=db_user.id
+                )
 
-            # Генерируем счёт
-            invoice_number = None
-            if self.document_service:
-                file_path = await self.document_service.generate_invoice(app_id)
-                if file_path:
-                    # Получаем номер из БД
-                    doc = await self.document_repo.get_latest_invoice(app_id)
-                    if doc:
-                        invoice_number = doc.number
+                await callback.message.edit_text(
+                    f"✅ <b>Эскалация одобрена!</b>\n\n"
+                    f"📋 {app.external_id}\n"
+                    f"💰 {app.amount:,.0f}₽\n\n"
+                    f"🏦 Заявка отправлена в банк на проверку рисков.",
+                    reply_markup=self.kb.back_to_menu(),
+                    parse_mode="HTML"
+                )
+                await callback.answer("Отправлено в банк")
 
-            invoice_text = ""
-            if invoice_number:
-                invoice_text = f"🧾 Счёт: <b>{invoice_number}</b>\n"
+                if self.notification_service:
+                    await self.notification_service.notify_bank_new_application(app)
+            else:
+                # Обычная заявка - финальное одобрение
+                await self.application_repo.update_status(app_id, 'approved')
 
-            await callback.message.edit_text(
-                f"✅ <b>Заявка одобрена!</b>\n\n"
-                f"📋 {app.external_id}\n"
-                f"💰 {app.amount:,.0f}₽\n\n"
-                f"{invoice_text}"
-                f"📄 Счёт отправлен бухгалтеру.",
-                reply_markup=self.kb.back_to_menu(),
-                parse_mode="HTML"
-            )
-            await callback.answer("Заявка одобрена!")
+                await self.log_repo.create_log(
+                    action='supervisor_approved',
+                    application_id=app_id,
+                    user_id=db_user.id
+                )
 
-            if self.notification_service:
-                await self.notification_service.notify_client_approved(app)
-                await self.notification_service.notify_manager_final_decision(app, 'approved')
+                # Обновляем лимиты компании и банка
+                if app.company_id:
+                    await self.company_repo.update_usage(app.company_id, app.amount, increment=True)
+                if app.bank_id:
+                    await self.bank_repo.update_usage(app.bank_id, app.amount, increment=True)
+
+                # Генерируем счёт
+                invoice_number = None
+                if self.document_service:
+                    file_path = await self.document_service.generate_invoice(app_id)
+                    if file_path:
+                        # Получаем номер из БД
+                        doc = await self.document_repo.get_latest_invoice(app_id)
+                        if doc:
+                            invoice_number = doc.number
+
+                invoice_text = ""
                 if invoice_number:
-                    await self.notification_service.notify_accountants_invoice_ready(app, invoice_number)
+                    invoice_text = f"🧾 Счёт: <b>{invoice_number}</b>\n"
+
+                await callback.message.edit_text(
+                    f"✅ <b>Заявка одобрена!</b>\n\n"
+                    f"📋 {app.external_id}\n"
+                    f"💰 {app.amount:,.0f}₽\n\n"
+                    f"{invoice_text}"
+                    f"📄 Счёт отправлен бухгалтеру.",
+                    reply_markup=self.kb.back_to_menu(),
+                    parse_mode="HTML"
+                )
+                await callback.answer("Заявка одобрена!")
+
+                if self.notification_service:
+                    await self.notification_service.notify_client_approved(app)
+                    await self.notification_service.notify_manager_final_decision(app, 'approved')
+                    if invoice_number:
+                        await self.notification_service.notify_accountants_invoice_ready(app, invoice_number)
 
     async def cb_reject(self, callback: CallbackQuery, db_user):
         """Отклонение заявки - выбор причины"""
