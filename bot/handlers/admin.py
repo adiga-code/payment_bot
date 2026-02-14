@@ -1063,7 +1063,10 @@ class AdminHandlers:
 
         try:
             # Создаем папку для подписей если не существует
-            signatures_dir = Path("documents/signatures")
+            # Используем абсолютный путь относительно корня проекта (/app в Docker)
+            import os
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # /app
+            signatures_dir = Path(base_dir) / "documents" / "signatures"
             signatures_dir.mkdir(parents=True, exist_ok=True)
 
             # Формируем путь к файлу
