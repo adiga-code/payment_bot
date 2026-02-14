@@ -383,15 +383,42 @@ class SupervisorHandlers:
                 user_id=db_user.id
             )
 
+            # Обновляем лимиты компании и банка
+            if app.company_id:
+                await self.company_repo.update_usage(app.company_id, app.amount, increment=True)
+            if app.bank_id:
+                await self.bank_repo.update_usage(app.bank_id, app.amount, increment=True)
+
+            # Генерируем счёт
+            invoice_number = None
+            if self.document_service:
+                file_path = await self.document_service.generate_invoice(app_id)
+                if file_path:
+                    # Получаем номер из БД
+                    doc = await self.document_repo.get_latest_invoice(app_id)
+                    if doc:
+                        invoice_number = doc.number
+
+            invoice_text = ""
+            if invoice_number:
+                invoice_text = f"🧾 Счёт: <b>{invoice_number}</b>\n"
+
             await callback.message.edit_text(
-                f"✅ <b>Этап одобрен</b>\n\n"
+                f"✅ <b>Заявка одобрена!</b>\n\n"
                 f"📋 {app.external_id}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
-                f"Ожидаются остальные подписи.",
+                f"{invoice_text}"
+                f"📄 Счёт отправлен бухгалтеру.",
                 reply_markup=self.kb.back_to_menu(),
                 parse_mode="HTML"
             )
-            await callback.answer("Одобрено")
+            await callback.answer("Заявка одобрена!")
+
+            if self.notification_service:
+                await self.notification_service.notify_client_approved(app)
+                await self.notification_service.notify_manager_final_decision(app, 'approved')
+                if invoice_number:
+                    await self.notification_service.notify_accountants_invoice_ready(app, invoice_number)
 
     async def cb_reject(self, callback: CallbackQuery, db_user):
         """Отклонение заявки - выбор причины"""
