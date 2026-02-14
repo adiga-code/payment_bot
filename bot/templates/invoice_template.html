@@ -148,13 +148,15 @@
             margin-top: 40px;
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: flex-end;
+            position: relative;
         }
 
         .signature-block {
             display: flex;
             align-items: center;
-            gap: 30px;
+            gap: 10px;
+            position: relative;
         }
 
         .signature-title {
@@ -174,13 +176,26 @@
             margin-left: 10px;
         }
 
-        .signature-image {
+        /* Изображение подписи справа от линии */
+        .signature-img {
             position: absolute;
-            right: 20mm;
-            bottom: 20mm;
-            max-width: 70mm;
-            max-height: 70mm;
-            z-index: 10;
+            right: -25mm;
+            top: 0;
+            max-width: 20mm;
+            max-height: 15mm;
+            object-fit: contain;
+        }
+
+        /* Печать в центре между подписями */
+        .stamp-image {
+            position: absolute;
+            left: 50%;
+            bottom: 0;
+            transform: translateX(-50%);
+            max-width: 40mm;
+            max-height: 40mm;
+            object-fit: contain;
+            z-index: 5;
         }
 
         hr {
@@ -302,20 +317,28 @@
     <div class="signature-section">
         <div class="signature-block">
             <span class="signature-title">Руководитель</span>
-            <div class="signature-line"></div>
+            <div class="signature-line">
+                {% if signature_path %}
+                <img src="file://{{ signature_path }}" class="signature-img" alt="Подпись">
+                {% endif %}
+            </div>
             <span class="signature-name">{{ supplier.director_name }}</span>
         </div>
 
         <div class="signature-block">
             <span class="signature-title">Бухгалтер</span>
-            <div class="signature-line"></div>
+            <div class="signature-line">
+                {% if signature_path %}
+                <img src="file://{{ signature_path }}" class="signature-img" alt="Подпись">
+                {% endif %}
+            </div>
             <span class="signature-name">{{ supplier.accountant_name }}</span>
         </div>
-    </div>
 
-    <!-- Изображение подписи и печати -->
-    {% if signature_path %}
-    <img src="file://{{ signature_path }}" class="signature-image" alt="Подпись и печать">
-    {% endif %}
+        <!-- Печать в центре -->
+        {% if stamp_path %}
+        <img src="file://{{ stamp_path }}" class="stamp-image" alt="Печать">
+        {% endif %}
+    </div>
 </body>
 </html>

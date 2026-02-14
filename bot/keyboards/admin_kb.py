@@ -237,7 +237,7 @@ class AdminKeyboards:
         return builder.as_markup()
 
     @staticmethod
-    def company_actions(company_id: int, is_active: bool, has_signature: bool = False) -> InlineKeyboardMarkup:
+    def company_actions(company_id: int, is_active: bool, has_signature: bool = False, has_stamp: bool = False) -> InlineKeyboardMarkup:
         """Действия с компанией"""
         builder = InlineKeyboardBuilder()
 
@@ -252,14 +252,24 @@ class AdminKeyboards:
             InlineKeyboardButton(text="🏦 Банковские счета", callback_data=f"admin:company:banks:{company_id}")
         )
 
-        # Подпись и печать
+        # Подпись
         if has_signature:
             builder.row(
-                InlineKeyboardButton(text="🖼️ Просмотреть подпись", callback_data=f"admin:company:view_signature:{company_id}"),
+                InlineKeyboardButton(text="🖊️ Просмотреть подпись", callback_data=f"admin:company:view_signature:{company_id}"),
                 InlineKeyboardButton(text="🗑️ Удалить подпись", callback_data=f"admin:company:delete_signature:{company_id}")
             )
         builder.row(
             InlineKeyboardButton(text="📤 Загрузить подпись", callback_data=f"admin:company:upload_signature:{company_id}")
+        )
+
+        # Печать
+        if has_stamp:
+            builder.row(
+                InlineKeyboardButton(text="🔘 Просмотреть печать", callback_data=f"admin:company:view_stamp:{company_id}"),
+                InlineKeyboardButton(text="🗑️ Удалить печать", callback_data=f"admin:company:delete_stamp:{company_id}")
+            )
+        builder.row(
+            InlineKeyboardButton(text="📤 Загрузить печать", callback_data=f"admin:company:upload_stamp:{company_id}")
         )
 
         builder.row(
