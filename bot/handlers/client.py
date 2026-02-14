@@ -112,6 +112,12 @@ class ClientHandlers:
         amount = data['amount']
         inn = data['inn']
 
+        # Немедленно очищаем состояние, чтобы предотвратить дубли
+        await state.clear()
+
+        # Отправляем подтверждение получения
+        processing_msg = await message.answer("⏳ Создаю заявку...")
+
         # Создаём заявку и получаем объект с external_id
         app = await self.logic_service.create_new_application({
             'amount': amount,
@@ -129,7 +135,6 @@ class ClientHandlers:
             f"🔍 Заявка отправлена на проверку.\n"
             f"Вы получите уведомление о статусе."
         )
-        await state.clear()
 
     async def start_command(self, message: Message):
         """Команда /start - приветствие и регистрация клиента"""
@@ -236,6 +241,12 @@ class ClientHandlers:
         contract_number = data['contract_number']
         contract_date = data['contract_date']
 
+        # Немедленно очищаем состояние, чтобы предотвратить дубли
+        await state.clear()
+
+        # Отправляем подтверждение получения
+        await message.answer("⏳ Сохраняю данные...")
+
         # Сохраняем данные договора
         await self.application_repo.update_by_id(
             app_id,
@@ -257,8 +268,6 @@ class ClientHandlers:
             f"🔍 Заявка отправлена на финальное согласование.",
             parse_mode="HTML"
         )
-
-        await state.clear()
 
         # Уведомляем руководителей
         if self.notification_service:
