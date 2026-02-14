@@ -150,17 +150,32 @@ class DocumentService:
         if co and co.signature_image_path:
             # Если путь относительный - делаем абсолютным
             sig_path = co.signature_image_path
+            logger.info(f"[SIGNATURE DEBUG] Original path from DB: {sig_path}")
+
             if not os.path.isabs(sig_path):
                 # Относительный путь от корня проекта
                 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                logger.info(f"[SIGNATURE DEBUG] Project root: {project_root}")
                 sig_path = os.path.join(project_root, sig_path)
+                logger.info(f"[SIGNATURE DEBUG] Joined path: {sig_path}")
 
             # Проверяем что файл существует
             if os.path.exists(sig_path):
                 signature_path = os.path.abspath(sig_path)
-                logger.info(f"Using signature for company {co.id}: {signature_path}")
+                logger.info(f"[SIGNATURE DEBUG] ✅ File exists! Absolute path: {signature_path}")
             else:
-                logger.warning(f"Signature file not found for company {co.id}: {sig_path}")
+                logger.error(f"[SIGNATURE DEBUG] ❌ File NOT found at: {sig_path}")
+                # Попробуем найти файл в других местах для отладки
+                alt_paths = [
+                    os.path.join('/app', sig_path),
+                    os.path.join('/app/documents/signatures', os.path.basename(sig_path)),
+                    sig_path
+                ]
+                for alt_path in alt_paths:
+                    if os.path.exists(alt_path):
+                        logger.info(f"[SIGNATURE DEBUG] Found file at alternative path: {alt_path}")
+                        signature_path = os.path.abspath(alt_path)
+                        break
         elif co:
             logger.warning(f"Company {co.id} ({co.name}) has no signature - invoice will be generated without signature")
 
