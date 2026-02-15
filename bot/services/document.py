@@ -8,7 +8,7 @@ from decimal import Decimal
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 
-from database import DocumentRepository, ApplicationRepository, CompanyRepository
+from database import DocumentRepository, ApplicationRepository, CompanyRepository, UserRepository
 from utils.amount_words import amount_to_words
 
 logger = logging.getLogger(__name__)
@@ -42,11 +42,13 @@ class DocumentService:
         self,
         document_repo: DocumentRepository,
         application_repo: ApplicationRepository,
-        company_repo: CompanyRepository = None
+        company_repo: CompanyRepository = None,
+        user_repo: UserRepository = None
     ):
         self.document_repo = document_repo
         self.application_repo = application_repo
         self.company_repo = company_repo
+        self.user_repo = user_repo
         os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
         # Jinja2 окружение
@@ -118,7 +120,20 @@ class DocumentService:
             'date': app.contract_date or "",
         }
 
-        invoice_purpose = app.invoice_purpose or app.purpose or ""
+        # Получаем назначение платежа от бухгалтера
+        invoice_purpose = ""
+        if self.user_repo:
+            # Ищем любого бухгалтера с установленным назначением
+            accountants = await self.user_repo.get_by_role('accountant')
+            for acc in accountants:
+                if acc.default_invoice_purpose:
+                    invoice_purpose = acc.default_invoice_purpose
+                    break
+
+        # Если не нашли - используем старое значение из заявки (для совместимости)
+        if not invoice_purpose:
+            invoice_purpose = app.invoice_purpose or app.purpose or ""
+
         amount = Decimal(str(app.amount))
 
         # НДС 22%

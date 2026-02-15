@@ -124,3 +124,9 @@ class DatabaseManager:
                 "ALTER TABLE companies ADD COLUMN IF NOT EXISTS "
                 "stamp_image_path VARCHAR(500)"
             ))
+
+            # Назначение платежа по умолчанию для бухгалтера
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "default_invoice_purpose TEXT"
+            ))
