@@ -18,6 +18,9 @@ class AccountantKeyboards:
             InlineKeyboardButton(text="📨 Отправленные", callback_data="acc:sent")
         )
         builder.row(
+            InlineKeyboardButton(text="⚙️ Настроить назначение", callback_data="acc:set_purpose")
+        )
+        builder.row(
             InlineKeyboardButton(text="📊 Статистика", callback_data="acc:stats")
         )
         return builder.as_markup()

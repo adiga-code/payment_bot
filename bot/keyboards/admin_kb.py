@@ -68,7 +68,8 @@ class AdminKeyboards:
         for user in page_users:
             emoji = role_emoji.get(user.role, '👤')
             status = '✅' if user.is_active else '❌'
-            name = user.first_name or user.username or str(user.telegram_id)
+            # Приоритет: display_name > first_name > username > telegram_id
+            name = user.display_name or user.first_name or user.username or str(user.telegram_id)
             builder.row(
                 InlineKeyboardButton(
                     text=f"{emoji}{status} {name[:20]} ({user.role})",
@@ -101,6 +102,9 @@ class AdminKeyboards:
 
         builder.row(
             InlineKeyboardButton(text="🔄 Изменить роль", callback_data=f"admin:user:role:{user_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="✏️ Изменить имя", callback_data=f"admin:user:edit_name:{user_id}")
         )
 
         if is_active:
@@ -530,5 +534,74 @@ class AdminKeyboards:
         builder = InlineKeyboardBuilder()
         builder.row(
             InlineKeyboardButton(text="🔙 В меню", callback_data="admin:menu")
+        )
+        return builder.as_markup()
+
+    # ==================== СТАТИСТИКА ====================
+
+    @staticmethod
+    def stats_menu() -> InlineKeyboardMarkup:
+        """Меню выбора раздела статистики"""
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="⚙️ Статистика системы", callback_data="admin:stats:system")
+        )
+        builder.row(
+            InlineKeyboardButton(text="📅 Сегодня", callback_data="admin:stats:today")
+        )
+        builder.row(
+            InlineKeyboardButton(text="📆 Неделя", callback_data="admin:stats:week"),
+            InlineKeyboardButton(text="📊 Месяц", callback_data="admin:stats:month")
+        )
+        builder.row(
+            InlineKeyboardButton(text="🗓 Произвольный период", callback_data="admin:stats:custom")
+        )
+        builder.row(
+            InlineKeyboardButton(text="💳 Статистика по оплатам", callback_data="admin:stats:payments")
+        )
+        builder.row(
+            InlineKeyboardButton(text="🔙 В меню", callback_data="admin:menu")
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def admin_stats_detail_menu(start_date, end_date) -> InlineKeyboardMarkup:
+        """Меню детализации статистики для админа"""
+        builder = InlineKeyboardBuilder()
+
+        start_str = start_date.isoformat()
+        end_str = end_date.isoformat()
+
+        builder.row(
+            InlineKeyboardButton(
+                text="🏢 По компаниям",
+                callback_data=f"admin:stats:detail:by_company:{start_str}:{end_str}"
+            ),
+            InlineKeyboardButton(
+                text="🏦 По банкам",
+                callback_data=f"admin:stats:detail:by_bank:{start_str}:{end_str}"
+            )
+        )
+        builder.row(
+            InlineKeyboardButton(
+                text="👤 По клиентам",
+                callback_data=f"admin:stats:detail:by_client:{start_str}:{end_str}"
+            ),
+            InlineKeyboardButton(
+                text="📅 По датам",
+                callback_data=f"admin:stats:detail:by_date:{start_str}:{end_str}"
+            )
+        )
+        builder.row(
+            InlineKeyboardButton(text="🔙 К статистике", callback_data="admin:stats")
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def back_to_stats_menu() -> InlineKeyboardMarkup:
+        """Кнопка возврата к меню статистики"""
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="🔙 К статистике", callback_data="admin:stats")
         )
         return builder.as_markup()

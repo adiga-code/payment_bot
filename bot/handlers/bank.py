@@ -5,6 +5,8 @@ from datetime import datetime, date
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
 from sqlalchemy import select, func
 
 from database import (
@@ -18,6 +20,7 @@ from database.models import Application
 from services.notification import NotificationService
 from keyboards.bank_kb import BankKeyboards
 from middleware import RoleRequiredMiddleware
+from utils import format_application_number
 
 
 REJECTION_REASONS = {
@@ -26,6 +29,11 @@ REJECTION_REASONS = {
     'blacklist': 'Контрагент в чёрном списке',
     'docs_mismatch': 'Несоответствие документов',
 }
+
+
+class BankStates(StatesGroup):
+    """FSM состояния для банка"""
+    waiting_for_risk_comment = State()  # Ожидание комментария к минимальному риску
 
 
 class BankHandlers:
@@ -74,6 +82,9 @@ class BankHandlers:
         self.router.callback_query(F.data.startswith("bank:risk:"))(self.cb_risk_assessment)
         self.router.callback_query(F.data.startswith("bank:reject:"))(self.cb_reject_reason)
         self.router.callback_query(F.data.startswith("bank:cancel_reject:"))(self.cb_cancel_reject)
+
+        # FSM обработчики
+        self.router.message(BankStates.waiting_for_risk_comment)(self.process_risk_comment)
 
     # ==================== ПАНЕЛЬ БАНКА ====================
 
@@ -235,8 +246,17 @@ class BankHandlers:
 
     async def _validate_bank_access(self, callback: CallbackQuery, db_user) -> bool:
         """Проверяет, что сотрудник банка имеет доступ к группе."""
+        # Супервайзеры и админы могут всё
         if db_user.role in ('supervisor', 'admin'):
             return True
+
+        # Только сотрудники банка могут нажимать кнопки в группе
+        if db_user.role != 'bank':
+            await callback.answer(
+                "⛔️ Только сотрудники банка могут оценивать риски",
+                show_alert=True
+            )
+            return False
 
         bank = await self.bank_repo.get_by_chat_id(callback.message.chat.id)
         if not bank:
@@ -251,7 +271,7 @@ class BankHandlers:
 
     # ==================== CALLBACK HANDLERS (групповой чат) ====================
 
-    async def cb_risk_assessment(self, callback: CallbackQuery, db_user):
+    async def cb_risk_assessment(self, callback: CallbackQuery, state: FSMContext, db_user):
         """Оценка риска"""
         if not await self._validate_bank_access(callback, db_user):
             return
@@ -268,7 +288,7 @@ class BankHandlers:
         if risk_level == "high_risk":
             await callback.message.edit_text(
                 f"❌ <b>Отклонение заявки</b>\n\n"
-                f"📋 {app.external_id}\n"
+                f"📋 {format_application_number(app, for_client=False)}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
                 f"Выберите причину отклонения:",
                 reply_markup=self.kb.rejection_reasons(app_id),
@@ -277,11 +297,25 @@ class BankHandlers:
             await callback.answer()
             return
 
+        # Если минимальный риск - запрашиваем комментарий
+        if risk_level == "min_risk":
+            await state.set_state(BankStates.waiting_for_risk_comment)
+            await state.update_data(app_id=app_id, risk_level=risk_level, employee_id=db_user.id)
+            await callback.message.edit_text(
+                f"⚠️ <b>Минимальный риск</b>\n\n"
+                f"📋 {format_application_number(app, for_client=False)}\n"
+                f"💰 {app.amount:,.0f}₽\n\n"
+                f"Опишите минимальный риск (комментарий будет отправлен супервайзеру):",
+                parse_mode="HTML"
+            )
+            await callback.answer()
+            return
+
+        # Только для "Без риска" (min_risk обрабатывается через FSM выше)
         # Одобряем этап банка
         pending_approval = await self.approval_repo.get_by_role(app_id, 'bank')
         if pending_approval and not pending_approval.decision:
-            comment = "Без риска" if risk_level == "no_risk" else "Минимальный риск"
-            await self.approval_repo.approve(pending_approval.id, db_user.id, comment)
+            await self.approval_repo.approve(pending_approval.id, db_user.id, "Без риска")
 
         # Логируем
         await self.log_repo.create_log(
@@ -293,45 +327,21 @@ class BankHandlers:
 
         employee_name = db_user.first_name or db_user.username
 
-        if risk_level == "min_risk":
-            # Минимальный риск - эскалация к руководителю (запись создаётся сразу)
-            await self.approval_repo.create_escalation(
-                app_id=app_id,
-                role='supervisor',
-                reason='Минимальный риск - требуется решение руководителя',
-                sequence=0
-            )
-            # Переводим в статус min_risk_review (ожидание проверки супервайзером)
-            await self.application_repo.update_status(app_id, 'min_risk_review')
+        # Без риска - ожидаем данные договора от клиента
+        await self.application_repo.update_status(app_id, 'awaiting_contract_details')
 
-            await callback.message.edit_text(
-                f"⚠️ <b>Минимальный риск</b>\n\n"
-                f"📋 {app.external_id}\n"
-                f"💰 {app.amount:,.0f}₽\n\n"
-                f"👤 Оценил: {employee_name}\n"
-                f"📝 Отправлено на проверку супервайзеру.",
-                parse_mode="HTML"
-            )
-            await callback.answer("Отправлено на проверку супервайзеру")
+        await callback.message.edit_text(
+            f"✅ <b>Без риска</b>\n\n"
+            f"📋 {format_application_number(app, for_client=False)}\n"
+            f"💰 {app.amount:,.0f}₽\n\n"
+            f"👤 Оценил: {employee_name}\n"
+            f"📝 Клиенту отправлен запрос на данные договора.",
+            parse_mode="HTML"
+        )
+        await callback.answer("Одобрено банком")
 
-            if self.notification_service:
-                await self.notification_service.notify_supervisors_escalation(app, "банк (минимальный риск)")
-        else:
-            # Без риска - ожидаем данные договора от клиента
-            await self.application_repo.update_status(app_id, 'awaiting_contract_details')
-
-            await callback.message.edit_text(
-                f"✅ <b>Без риска</b>\n\n"
-                f"📋 {app.external_id}\n"
-                f"💰 {app.amount:,.0f}₽\n\n"
-                f"👤 Оценил: {employee_name}\n"
-                f"📝 Клиенту отправлен запрос на данные договора.",
-                parse_mode="HTML"
-            )
-            await callback.answer("Одобрено банком")
-
-            if self.notification_service:
-                await self.notification_service.notify_client_contract_details_needed(app)
+        if self.notification_service:
+            await self.notification_service.notify_client_contract_details_needed(app)
 
     async def cb_reject_reason(self, callback: CallbackQuery, db_user):
         """Отклонение заявки с выбранной причиной"""
@@ -366,7 +376,7 @@ class BankHandlers:
 
         await callback.message.edit_text(
             f"❌ <b>Заявка отклонена</b>\n\n"
-            f"📋 {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=False)}\n"
             f"💰 {app.amount:,.0f}₽\n\n"
             f"👤 Отклонил: {employee_name}\n"
             f"📝 Причина: {reason}",
@@ -392,7 +402,7 @@ class BankHandlers:
 
         notification_text = (
             f"📥 <b>Заявка на оценку риска</b>\n\n"
-            f"📋 {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=False)}\n"
             f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
             f"🏢 ИНН плательщика: <code>{app.payer_inn}</code>\n"
         )
@@ -411,3 +421,62 @@ class BankHandlers:
             parse_mode="HTML"
         )
         await callback.answer()
+
+    async def process_risk_comment(self, message: Message, state: FSMContext, db_user):
+        """Обработка комментария к минимальному риску"""
+        comment = message.text.strip()
+        
+        if not comment:
+            await message.answer("❗ Введите описание риска")
+            return
+        
+        data = await state.get_data()
+        app_id = data['app_id']
+        risk_level = data['risk_level']
+        employee_id = data['employee_id']
+        
+        await state.clear()
+        
+        app = await self.application_repo.get_with_relations(app_id)
+        if not app:
+            await message.answer("❗ Заявка не найдена")
+            return
+        
+        # Одобряем этап банка с комментарием
+        pending_approval = await self.approval_repo.get_by_role(app_id, 'bank')
+        if pending_approval and not pending_approval.decision:
+            await self.approval_repo.approve(pending_approval.id, employee_id, f"Минимальный риск: {comment}")
+        
+        # Логируем
+        await self.log_repo.create_log(
+            action='bank_approved',
+            application_id=app_id,
+            user_id=employee_id,
+            details={'risk_level': risk_level, 'comment': comment}
+        )
+        
+        # Эскалация к руководителю
+        await self.approval_repo.create_escalation(
+            app_id=app_id,
+            role='supervisor',
+            reason=f'Минимальный риск: {comment}',
+            sequence=0
+        )
+        
+        # Переводим в статус min_risk_review
+        await self.application_repo.update_status(app_id, 'min_risk_review')
+        
+        employee_name = db_user.first_name or db_user.username
+        
+        await message.answer(
+            f"⚠️ <b>Минимальный риск</b>\n\n"
+            f"📋 {format_application_number(app, for_client=False)}\n"
+            f"💰 {app.amount:,.0f}₽\n\n"
+            f"📝 Комментарий: {comment}\n"
+            f"👤 Оценил: {employee_name}\n\n"
+            f"✅ Отправлено на проверку супервайзеру.",
+            parse_mode="HTML"
+        )
+        
+        if self.notification_service:
+            await self.notification_service.notify_supervisors_escalation(app, f"банк (минимальный риск: {comment})")

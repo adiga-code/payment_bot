@@ -4,6 +4,8 @@ import os
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
 from datetime import datetime
 
 from database import (
@@ -16,6 +18,12 @@ from services.notification import NotificationService
 from services.document import DocumentService
 from keyboards.accountant_kb import AccountantKeyboards
 from middleware import RoleRequiredMiddleware
+from utils import format_application_number
+
+
+class AccountantStates(StatesGroup):
+    """FSM состояния для бухгалтера"""
+    waiting_for_purpose = State()  # Ожидание ввода назначения платежа
 
 
 class AccountantHandlers:
@@ -60,11 +68,15 @@ class AccountantHandlers:
         self.router.callback_query(F.data == "acc:pending")(self.cb_pending_invoices)
         self.router.callback_query(F.data == "acc:sent")(self.cb_sent_invoices)
         self.router.callback_query(F.data == "acc:stats")(self.cb_stats)
+        self.router.callback_query(F.data == "acc:set_purpose")(self.cb_set_purpose)
         self.router.callback_query(F.data.startswith("acc:page:"))(self.cb_page)
         self.router.callback_query(F.data.startswith("acc:doc:"))(self.cb_view_invoice)
         self.router.callback_query(F.data.startswith("acc:send:"))(self.cb_send_to_client)
         self.router.callback_query(F.data.startswith("acc:confirm_send:"))(self.cb_confirm_send)
         self.router.callback_query(F.data.startswith("acc:regen:"))(self.cb_regenerate)
+
+        # FSM обработчики
+        self.router.message(AccountantStates.waiting_for_purpose)(self.process_purpose)
 
         # Подтверждение получения средств
         self.router.callback_query(F.data.startswith("acc:confirm_payment:"))(self.cb_confirm_payment)
@@ -180,7 +192,7 @@ class AccountantHandlers:
 
         text = (
             f"📄 <b>Счёт {doc.number}</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
             f"🏢 Компания: {company_name}\n"
             f"🏦 Банк: {bank_name}\n"
@@ -259,7 +271,7 @@ class AccountantHandlers:
                     caption=(
                         f"📄 <b>Счёт на оплату {doc.number}</b>\n\n"
                         f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
-                        f"📋 Заявка: {app.external_id}"
+                        f"📋 {format_application_number(app, for_client=True)}"
                     ),
                     parse_mode="HTML"
                 )
@@ -309,7 +321,7 @@ class AccountantHandlers:
 
         await callback.message.edit_text(
             f"✅ <b>Счёт {doc.number} отправлен клиенту!</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n\n"
             f"⏳ Ожидаем подтверждения оплаты от клиента.",
             reply_markup=self.kb.back_to_menu(),
@@ -364,7 +376,7 @@ class AccountantHandlers:
         text = (
             f"🔄 <b>Счёт перегенерирован</b>\n\n"
             f"📄 Новый: <b>{new_doc.number}</b>\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
             f"🏢 Компания: {company_name}\n"
             f"🏦 Банк: {bank_name}\n\n"
@@ -473,7 +485,7 @@ class AccountantHandlers:
 
         await callback.message.edit_text(
             f"✅ <b>Получение средств подтверждено!</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n\n"
             f"📤 Менеджер уведомлён для выбора формата выдачи.",
             parse_mode="HTML"
@@ -513,7 +525,7 @@ class AccountantHandlers:
 
         await callback.message.edit_text(
             f"❌ <b>Средства не поступили</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n\n"
             f"⚠️ Заявка аннулирована. Клиент уведомлён.",
             parse_mode="HTML"
@@ -523,3 +535,39 @@ class AccountantHandlers:
         # Уведомляем клиента
         if self.notification_service:
             await self.notification_service.notify_client_payment_not_received(app)
+
+    async def cb_set_purpose(self, callback: CallbackQuery, state: FSMContext, db_user):
+        """Настройка назначения платежа по умолчанию"""
+        # Получаем текущее назначение
+        current_purpose = db_user.default_invoice_purpose or "не установлено"
+        
+        await callback.message.edit_text(
+            f"⚙️ <b>Настройка назначения платежа</b>\n\n"
+            f"Текущее значение:\n"
+            f"<i>{current_purpose}</i>\n\n"
+            f"Введите новое назначение платежа, которое будет использоваться для всех счетов:\n"
+            f"Например: <i>за строительные материалы</i>",
+            parse_mode="HTML"
+        )
+        await state.set_state(AccountantStates.waiting_for_purpose)
+        await callback.answer()
+
+    async def process_purpose(self, message: Message, state: FSMContext, db_user):
+        """Обработка введенного назначения платежа"""
+        purpose = message.text.strip()
+        
+        if not purpose:
+            await message.answer("❗ Введите назначение платежа")
+            return
+        
+        # Сохраняем назначение
+        await self.user_repo.update(db_user.id, default_invoice_purpose=purpose)
+        await state.clear()
+        
+        await message.answer(
+            f"✅ <b>Назначение платежа сохранено!</b>\n\n"
+            f"Новое значение:\n"
+            f"<i>{purpose}</i>\n\n"
+            f"Это назначение будет использоваться для всех новых счетов.",
+            parse_mode="HTML"
+        )

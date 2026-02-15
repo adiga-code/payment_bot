@@ -20,11 +20,18 @@ from services.notification import NotificationService
 from services.document import DocumentService
 from keyboards.supervisor_kb import SupervisorKeyboards
 from middleware import RoleRequiredMiddleware
+from utils import format_application_number
 
 
 class RejectReasonState(StatesGroup):
     """Состояние для ввода причины отклонения"""
     waiting_for_reason = State()
+
+
+class StatsDateState(StatesGroup):
+    """Состояния для выбора даты статистики"""
+    waiting_for_start_date = State()
+    waiting_for_end_date = State()
 
 
 class SupervisorHandlers:
@@ -90,9 +97,16 @@ class SupervisorHandlers:
         self.router.callback_query(F.data.startswith("sv:return:"))(self.cb_return_to_manager)
         self.router.callback_query(F.data.startswith("sv:confirm_"))(self.cb_confirm)
         self.router.callback_query(F.data == "sv:stats")(self.cb_stats)
+        self.router.callback_query(F.data == "sv:stats:today")(self.cb_stats_today)
+        self.router.callback_query(F.data == "sv:stats:week")(self.cb_stats_week)
+        self.router.callback_query(F.data == "sv:stats:month")(self.cb_stats_month)
+        self.router.callback_query(F.data == "sv:stats:custom")(self.cb_stats_custom)
+        self.router.callback_query(F.data.startswith("sv:stats:detail:"))(self.cb_stats_detail)
 
         # FSM
         self.router.message(RejectReasonState.waiting_for_reason)(self.process_reject_reason)
+        self.router.message(StatsDateState.waiting_for_start_date)(self.process_stats_start_date)
+        self.router.message(StatsDateState.waiting_for_end_date)(self.process_stats_end_date)
 
     # ==================== КОМАНДЫ ====================
 
@@ -307,7 +321,7 @@ class SupervisorHandlers:
 
             await callback.message.edit_text(
                 f"✅ <b>Минимальный риск одобрен!</b>\n\n"
-                f"📋 {app.external_id}\n"
+                f"📋 {format_application_number(app, for_client=True)}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
                 f"📝 Клиенту отправлен запрос на данные договора.",
                 reply_markup=self.kb.back_to_menu(),
@@ -358,7 +372,7 @@ class SupervisorHandlers:
 
             await callback.message.edit_text(
                 f"✅ <b>Заявка одобрена!</b>\n\n"
-                f"📋 {app.external_id}\n"
+                f"📋 {format_application_number(app, for_client=True)}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
                 f"🎉 Все подписи собраны.\n"
                 f"{invoice_text}"
@@ -390,7 +404,7 @@ class SupervisorHandlers:
 
                 await callback.message.edit_text(
                     f"✅ <b>Эскалация одобрена!</b>\n\n"
-                    f"📋 {app.external_id}\n"
+                    f"📋 {format_application_number(app, for_client=True)}\n"
                     f"💰 {app.amount:,.0f}₽\n\n"
                     f"🏦 Заявка отправлена в банк на проверку рисков.",
                     reply_markup=self.kb.back_to_menu(),
@@ -432,7 +446,7 @@ class SupervisorHandlers:
 
                 await callback.message.edit_text(
                     f"✅ <b>Заявка одобрена!</b>\n\n"
-                    f"📋 {app.external_id}\n"
+                    f"📋 {format_application_number(app, for_client=True)}\n"
                     f"💰 {app.amount:,.0f}₽\n\n"
                     f"{invoice_text}"
                     f"📄 Счёт отправлен бухгалтеру.",
@@ -502,7 +516,7 @@ class SupervisorHandlers:
         await self._do_reject(app, reason, db_user)
 
         await message.answer(
-            f"❌ <b>Заявка {app.external_id} отклонена</b>\n\n"
+            f"❌ <b>{format_application_number(app, for_client=True)} отклонена</b>\n\n"
             f"📝 Причина: {reason}",
             reply_markup=self.kb.back_to_menu(),
             parse_mode="HTML"
@@ -530,7 +544,7 @@ class SupervisorHandlers:
 
         await callback.message.edit_text(
             f"↩️ <b>Заявка возвращена</b>\n\n"
-            f"📋 {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 {app.amount:,.0f}₽\n\n"
             f"Заявка возвращена менеджеру на доработку.",
             reply_markup=self.kb.back_to_menu(),
@@ -554,32 +568,208 @@ class SupervisorHandlers:
         # Другие действия...
 
     async def cb_stats(self, callback: CallbackQuery, db_user):
-        """Статистика"""
-        today = date.today()
-        daily_stats = await self.application_repo.get_daily_stats(today)
-
-        total = sum(s['count'] for s in daily_stats)
-        total_amount = sum(s['total_amount'] for s in daily_stats)
-
-        # Подсчёт по статусам
-        approved = next((s['count'] for s in daily_stats if s['status'] == 'approved'), 0)
-        rejected = next((s['count'] for s in daily_stats if s['status'] == 'rejected'), 0)
-        pending = next((s['count'] for s in daily_stats if s['status'] == 'supervisor_review'), 0)
-
-        # Конверсия
-        conversion = await self.application_repo.get_conversion_rate(today, today)
-
-        text = f"📊 <b>Статистика за {today.strftime('%d.%m.%Y')}</b>\n\n"
-        text += f"📋 Всего заявок: <b>{total}</b>\n"
-        text += f"💰 Общая сумма: <b>{total_amount:,.0f}₽</b>\n\n"
-        text += f"✅ Одобрено: {approved}\n"
-        text += f"❌ Отклонено: {rejected}\n"
-        text += f"⏳ На рассмотрении: {pending}\n\n"
-        text += f"📈 Конверсия: {conversion['conversion_rate']:.1f}%"
+        """Меню выбора периода для статистики"""
+        text = "📊 <b>Статистика</b>\n\n" \
+               "Выберите период для просмотра:"
 
         await callback.message.edit_text(
             text,
-            reply_markup=self.kb.back_to_menu(),
+            reply_markup=self.kb.stats_menu(),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+
+    async def cb_stats_today(self, callback: CallbackQuery, db_user):
+        """Статистика за сегодня"""
+        today = date.today()
+        await self._show_detailed_stats(callback, today, today)
+
+    async def cb_stats_week(self, callback: CallbackQuery, db_user):
+        """Статистика за последние 7 дней"""
+        today = date.today()
+        from datetime import timedelta
+        week_ago = today - timedelta(days=7)
+        await self._show_detailed_stats(callback, week_ago, today)
+
+    async def cb_stats_month(self, callback: CallbackQuery, db_user):
+        """Статистика за последние 30 дней"""
+        today = date.today()
+        from datetime import timedelta
+        month_ago = today - timedelta(days=30)
+        await self._show_detailed_stats(callback, month_ago, today)
+
+    async def cb_stats_custom(self, callback: CallbackQuery, db_user, state: FSMContext):
+        """Ввод произвольного периода"""
+        await callback.message.edit_text(
+            "📅 <b>Выбор произвольного периода</b>\n\n"
+            "Введите дату начала периода в формате ДД.ММ.ГГГГ\n"
+            "Например: 01.01.2024",
+            parse_mode="HTML"
+        )
+        await state.set_state(StatsDateState.waiting_for_start_date)
+        await callback.answer()
+
+    async def process_stats_start_date(self, message: Message, state: FSMContext, db_user):
+        """Обработка даты начала"""
+        from datetime import datetime
+        try:
+            start_date = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+            await state.update_data(start_date=start_date)
+            await message.answer(
+                f"✅ Дата начала: {start_date.strftime('%d.%m.%Y')}\n\n"
+                f"Теперь введите дату окончания периода в формате ДД.ММ.ГГГГ\n"
+                f"Например: {date.today().strftime('%d.%m.%Y')}",
+                parse_mode="HTML"
+            )
+            await state.set_state(StatsDateState.waiting_for_end_date)
+        except ValueError:
+            await message.answer(
+                "❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ\n"
+                "Например: 01.01.2024"
+            )
+
+    async def process_stats_end_date(self, message: Message, state: FSMContext, db_user):
+        """Обработка даты окончания и показ статистики"""
+        from datetime import datetime
+        try:
+            end_date = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+            data = await state.get_data()
+            start_date = data['start_date']
+
+            if end_date < start_date:
+                await message.answer("❌ Дата окончания не может быть раньше даты начала!")
+                return
+
+            await state.clear()
+            # Показываем статистику через callback эмуляцию
+            stats = await self._get_detailed_stats(start_date, end_date)
+            text = self._format_stats_text(start_date, end_date, stats)
+
+            await message.answer(
+                text,
+                reply_markup=self.kb.stats_detail_menu(start_date, end_date),
+                parse_mode="HTML"
+            )
+        except ValueError:
+            await message.answer(
+                "❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ\n"
+                "Например: 01.01.2024"
+            )
+
+    async def _show_detailed_stats(self, callback: CallbackQuery, start_date: date, end_date: date):
+        """Показать детальную статистику за период"""
+        stats = await self._get_detailed_stats(start_date, end_date)
+        text = self._format_stats_text(start_date, end_date, stats)
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=self.kb.stats_detail_menu(start_date, end_date),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+
+    async def _get_detailed_stats(self, start_date: date, end_date: date) -> dict:
+        """Получить детальную статистику"""
+        return await self.application_repo.get_detailed_stats(start_date, end_date)
+
+    def _format_stats_text(self, start_date: date, end_date: date, stats: dict) -> str:
+        """Форматировать текст статистики"""
+        period = f"{start_date.strftime('%d.%m.%Y')}"
+        if start_date != end_date:
+            period += f" - {end_date.strftime('%d.%m.%Y')}"
+
+        text = f"📊 <b>Статистика за {period}</b>\n\n"
+        text += f"📋 Всего заявок: <b>{stats['total_count']}</b>\n"
+        text += f"💰 Общая сумма: <b>{stats['total_amount']:,.0f}₽</b>\n\n"
+
+        # Статистика по статусам
+        if stats['by_status']:
+            text += "<b>По статусам:</b>\n"
+            status_names = {
+                'new': '🆕 Новые',
+                'manager_review': '👤 На проверке менеджера',
+                'bank_review': '🏦 На проверке банка',
+                'supervisor_review': '👔 На проверке супервайзера',
+                'min_risk_review': '⚠️ Минимальный риск',
+                'approved': '✅ Одобрено',
+                'rejected': '❌ Отклонено',
+                'cancelled': '🚫 Отменено',
+                'paid': '💵 Оплачено'
+            }
+            for status, data in stats['by_status'].items():
+                name = status_names.get(status, status)
+                text += f"  {name}: {data['count']} ({data['amount']:,.0f}₽)\n"
+
+        return text
+
+    async def cb_stats_detail(self, callback: CallbackQuery, db_user):
+        """Показать детализацию статистики"""
+        parts = callback.data.split(":")
+        detail_type = parts[2]  # by_company, by_bank, by_client, by_date
+
+        # Получаем даты из callback data или используем сегодня
+        try:
+            start_date_str = parts[3] if len(parts) > 3 else date.today().isoformat()
+            end_date_str = parts[4] if len(parts) > 4 else date.today().isoformat()
+            from datetime import datetime
+            start_date = datetime.fromisoformat(start_date_str).date()
+            end_date = datetime.fromisoformat(end_date_str).date()
+        except (IndexError, ValueError):
+            start_date = end_date = date.today()
+
+        stats = await self._get_detailed_stats(start_date, end_date)
+
+        period = f"{start_date.strftime('%d.%m.%Y')}"
+        if start_date != end_date:
+            period += f" - {end_date.strftime('%d.%m.%Y')}"
+
+        text = f"📊 <b>Детализация за {period}</b>\n\n"
+
+        if detail_type == "by_company":
+            text += "<b>По компаниям:</b>\n"
+            if stats['by_company']:
+                for company_id, data in sorted(stats['by_company'].items(), key=lambda x: x[1]['count'], reverse=True):
+                    company = await self.company_repo.get_by_id(company_id)
+                    company_name = company.name if company else f"ID {company_id}"
+                    text += f"  🏢 {company_name}: {data['count']} ({data['amount']:,.0f}₽)\n"
+            else:
+                text += "  Нет данных\n"
+
+        elif detail_type == "by_bank":
+            text += "<b>По банкам:</b>\n"
+            if stats['by_bank']:
+                for bank_id, data in sorted(stats['by_bank'].items(), key=lambda x: x[1]['count'], reverse=True):
+                    bank = await self.bank_repo.get_by_id(bank_id)
+                    bank_name = bank.name if bank else f"ID {bank_id}"
+                    text += f"  🏦 {bank_name}: {data['count']} ({data['amount']:,.0f}₽)\n"
+            else:
+                text += "  Нет данных\n"
+
+        elif detail_type == "by_client":
+            text += "<b>По клиентам:</b>\n"
+            if stats['by_client']:
+                # Показываем топ 20 клиентов
+                sorted_clients = sorted(stats['by_client'].items(), key=lambda x: x[1]['count'], reverse=True)[:20]
+                for client_id, data in sorted_clients:
+                    user = await self.user_repo.get_by_telegram_id(client_id)
+                    client_name = user.username or f"ID {client_id}" if user else f"ID {client_id}"
+                    text += f"  👤 @{client_name}: {data['count']} ({data['amount']:,.0f}₽)\n"
+                if len(stats['by_client']) > 20:
+                    text += f"\n  ... и еще {len(stats['by_client']) - 20} клиентов\n"
+            else:
+                text += "  Нет данных\n"
+
+        elif detail_type == "by_date":
+            text += "<b>По датам:</b>\n"
+            if stats['by_date']:
+                for app_date, data in sorted(stats['by_date'].items()):
+                    text += f"  📅 {app_date.strftime('%d.%m.%Y')}: {data['count']} ({data['amount']:,.0f}₽)\n"
+            else:
+                text += "  Нет данных\n"
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=self.kb.back_to_stats(),
             parse_mode="HTML"
         )
         await callback.answer()
@@ -608,7 +798,7 @@ class SupervisorHandlers:
         await self._do_reject(app, reason, db_user)
 
         await callback.message.edit_text(
-            f"❌ <b>Заявка {app.external_id} отклонена</b>\n\n"
+            f"❌ <b>{format_application_number(app, for_client=True)} отклонена</b>\n\n"
             f"📝 Причина: {reason}",
             reply_markup=self.kb.back_to_menu(),
             parse_mode="HTML"
@@ -660,7 +850,7 @@ class SupervisorHandlers:
             'paid': '💰 Оплачено'
         }
 
-        text = f"📋 <b>Заявка {app.external_id}</b>\n\n"
+        text = f"📋 <b>{format_application_number(app, for_client=True)}</b>\n\n"
         text += f"📊 Статус: {status_map.get(app.status, app.status)}\n"
         text += f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
         text += f"🏢 ИНН: <code>{app.payer_inn}</code>\n"

@@ -1,11 +1,24 @@
 # bot/keyboards/client_kb.py
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
 
 class ClientKeyboard:
     """Клавиатуры для клиента"""
+
+    @staticmethod
+    def main_menu() -> ReplyKeyboardMarkup:
+        """Главное меню клиента (Reply клавиатура)"""
+        builder = ReplyKeyboardBuilder()
+        builder.row(
+            KeyboardButton(text="📝 Создать заявку")
+        )
+        builder.row(
+            KeyboardButton(text="📋 Мои заявки"),
+            KeyboardButton(text="📚 История заявок")
+        )
+        return builder.as_markup(resize_keyboard=True)
 
     @staticmethod
     def payment_confirmation(app_id: int) -> InlineKeyboardMarkup:

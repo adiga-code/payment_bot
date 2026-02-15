@@ -2,6 +2,8 @@
 
 from typing import Optional, List
 from sqlalchemy import select
+from datetime import datetime
+import pytz
 
 from database.base_repository import BaseRepository
 from database.models import User
@@ -97,3 +99,67 @@ class UserRepository(BaseRepository[User]):
                 )
             )
             return list(result.scalars().all())
+
+    async def increment_application_counter(self, user_id: int) -> int:
+        """
+        Увеличить счетчик заявок для клиента.
+        Сбрасывает счетчик если это новый день (00:00 MSK).
+        Возвращает новое значение счетчика.
+        """
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        now_msk = datetime.now(moscow_tz)
+        today_msk = now_msk.date()
+
+        async with self.session_maker() as session:
+            # Получаем пользователя
+            result = await session.execute(
+                select(User).where(User.id == user_id)
+            )
+            user = result.scalar_one_or_none()
+
+            if not user:
+                raise ValueError(f"User with id {user_id} not found")
+
+            # Проверяем, нужно ли сбросить счетчик
+            if user.counter_date is None or user.counter_date.date() < today_msk:
+                # Новый день - сбрасываем счетчик
+                user.daily_application_counter = 1
+                user.counter_date = now_msk
+            else:
+                # Тот же день - инкрементируем
+                user.daily_application_counter += 1
+
+            await session.commit()
+            await session.refresh(user)
+
+            return user.daily_application_counter
+
+    async def reset_daily_counter(self, user_id: int) -> bool:
+        """Сбросить дневной счетчик заявок"""
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        now_msk = datetime.now(moscow_tz)
+
+        return await self.update_by_id(
+            user_id,
+            daily_application_counter=0,
+            counter_date=now_msk
+        )
+
+    async def reset_all_daily_counters(self) -> int:
+        """Сбросить все дневные счетчики (для запланированной задачи в 00:00)"""
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        now_msk = datetime.now(moscow_tz)
+
+        from sqlalchemy import update
+        async with self.session_maker() as session:
+            stmt = (
+                update(User)
+                .where(User.role == 'client')  # Только для клиентов
+                .values(
+                    daily_application_counter=0,
+                    counter_date=now_msk
+                )
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount

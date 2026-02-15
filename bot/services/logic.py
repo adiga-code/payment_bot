@@ -25,6 +25,14 @@ class LogicService:
         self.zcb_service = zcb_service
 
     async def create_new_application(self, data: dict):
+        # 0. Получить пользователя и инкрементировать счетчик
+        client = await self.user_repo.get_by_telegram_id(data['chat_id'])
+        if not client:
+            raise ValueError(f"User with telegram_id {data['chat_id']} not found")
+
+        # Инкрементируем счетчик заявок клиента
+        client_display_number = await self.user_repo.increment_application_counter(client.id)
+
         # 1. Создать заявку
         app = await self.application_repo.create(
             external_id=f"APP-{generate_unique_id()}",
@@ -32,6 +40,7 @@ class LogicService:
             payer_inn=data['inn'],
             purpose=data['purpose'],
             client_chat_id=data['chat_id'],
+            client_display_number=client_display_number,
             status='new'
         )
 

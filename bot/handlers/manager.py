@@ -16,12 +16,14 @@ from database import (
     UserRepository,
     CompanyRepository,
     BankRepository,
+    CompanyBankRepository,
     LogRepository
 )
 from services.notification import NotificationService
 from keyboards import ManagerKeyboards
 from keyboards.bank_kb import BankKeyboards
 from middleware import RoleRequiredMiddleware
+from utils import format_application_number
 
 
 class RejectReasonState(StatesGroup):
@@ -41,6 +43,7 @@ class ManagerHandlers:
             approval_repo: ApprovalRepository,
             company_repo: CompanyRepository,
             bank_repo: BankRepository,
+            company_bank_repo: CompanyBankRepository,
             log_repo: LogRepository,
             bot: Bot,
             notification_service: NotificationService = None
@@ -48,6 +51,7 @@ class ManagerHandlers:
         self.router = Router()
         self.user_repo = user_repo
         self.application_repo = application_repo
+        self.company_bank_repo = company_bank_repo
         self.approval_repo = approval_repo
         self.company_repo = company_repo
         self.bank_repo = bank_repo
@@ -238,22 +242,19 @@ class ManagerHandlers:
             await callback.answer("Заявка не найдена", show_alert=True)
             return
 
-        # Получаем активные компании с достаточным лимитом
+        # Получаем все активные компании (без проверки лимитов)
         companies = await self.company_repo.get_all()
-        available_companies = [
-            c for c in companies
-            if c.is_active and (c.daily_limit - c.current_daily_used) >= app.amount
-        ]
+        available_companies = [c for c in companies if c.is_active]
 
         if not available_companies:
             await callback.answer(
-                "Нет компаний с достаточным лимитом!",
+                "Нет активных компаний!",
                 show_alert=True
             )
             return
 
         await callback.message.edit_text(
-            f"📋 <b>Заявка {app.external_id}</b>\n"
+            f"📋 <b>{format_application_number(app, for_client=True)}</b>\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n\n"
             f"🏢 <b>Выберите компанию:</b>",
             reply_markup=self.kb.select_company(available_companies, app_id),
@@ -277,31 +278,39 @@ class ManagerHandlers:
 
         company = await self.company_repo.get_by_id(company_id)
 
-        # Получаем банки, где у компании есть счета
-        company_banks = await self.bank_repo.get_for_company(company_id)
+        # Получаем все счета компании (CompanyBank)
+        company_bank_accounts = await self.company_bank_repo.get_by_company(company_id)
 
-        # Фильтруем по доступному лимиту
-        available_banks = [
-            b for b in company_banks
-            if (b.daily_limit - b.current_daily_used) >= app.amount
+        # Фильтруем по доступному лимиту (проверяем лимит счета, а не банка)
+        available_accounts = [
+            cb for cb in company_bank_accounts
+            if (cb.daily_limit == 0 or (cb.daily_limit - cb.current_daily_used) >= app.amount)
         ]
 
-        if not available_banks:
+        if not available_accounts:
             # Проверяем, есть ли вообще счета у компании
-            if not company_banks:
+            if not company_bank_accounts:
                 await callback.answer(
                     "У компании нет привязанных банковских счетов!",
                     show_alert=True
                 )
             else:
                 await callback.answer(
-                    "Нет банков с достаточным лимитом!",
+                    "Нет счетов с достаточным лимитом!",
                     show_alert=True
                 )
             return
 
+        # Получаем уникальные банки из доступных счетов
+        bank_ids = list(set(cb.bank_id for cb in available_accounts))
+        available_banks = []
+        for bank_id in bank_ids:
+            bank = await self.bank_repo.get_by_id(bank_id)
+            if bank and bank.is_active and bank.is_available:
+                available_banks.append(bank)
+
         await callback.message.edit_text(
-            f"📋 <b>Заявка {app.external_id}</b>\n"
+            f"📋 <b>{format_application_number(app, for_client=True)}</b>\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n"
             f"🏢 Компания: {company.name}\n\n"
             f"🏦 <b>Выберите банк:</b>",
@@ -321,8 +330,31 @@ class ManagerHandlers:
             await callback.answer("Заявка не найдена", show_alert=True)
             return
 
+        # Инкрементируем счетчик заявок для CompanyBank и проверяем лимиты
+        bank_display_number = None
+        if app.company_id:
+            company_bank = await self.company_bank_repo.get_by_company_and_bank(
+                app.company_id,
+                bank_id
+            )
+            if company_bank:
+                # Проверяем и обновляем лимиты счета
+                limit_check = await self.company_bank_repo.check_and_update_limits(
+                    company_bank.id,
+                    float(app.amount)
+                )
+
+                if not limit_check['allowed']:
+                    await callback.answer(
+                        f"⚠️ Превышен лимит! Недостаточно средств на счете.",
+                        show_alert=True
+                    )
+                    return
+
+                bank_display_number = await self.company_bank_repo.increment_counter(company_bank.id)
+
         # Сохраняем банк и менеджера
-        await self.application_repo.assign_bank(app_id, bank_id)
+        await self.application_repo.assign_bank(app_id, bank_id, bank_display_number)
         await self.application_repo.assign_manager(app_id, db_user.id)
 
         # Обновляем статус заявки
@@ -345,7 +377,7 @@ class ManagerHandlers:
 
         await callback.message.edit_text(
             f"✅ <b>Заявка одобрена!</b>\n\n"
-            f"📋 {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 {app.amount:,.0f}₽\n"
             f"🏦 Отправлена в: {bank.name}\n\n"
             f"⏳ Ожидаем ответа от банка...",
@@ -358,7 +390,7 @@ class ManagerHandlers:
         if bank and bank.chat_id:
             notification_text = (
                 f"📥 <b>Новая заявка на оценку риска</b>\n\n"
-                f"📋 {app.external_id}\n"
+                f"📋 {format_application_number(app, for_client=True)}\n"
                 f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
                 f"🏢 ИНН плательщика: <code>{app.payer_inn}</code>\n"
             )
@@ -451,7 +483,7 @@ class ManagerHandlers:
         )
 
         await message.answer(
-            f"❌ <b>Заявка {app.external_id} отклонена</b>\n\n"
+            f"❌ <b>{format_application_number(app, for_client=True)} отклонена</b>\n\n"
             f"📝 Причина: {reason}",
             reply_markup=self.kb.main_menu(),
             parse_mode="HTML"
@@ -494,7 +526,7 @@ class ManagerHandlers:
 
         await callback.message.edit_text(
             f"🚨 <b>Заявка эскалирована</b>\n\n"
-            f"📋 {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 {app.amount:,.0f}₽\n\n"
             f"📤 Отправлена руководителю на рассмотрение.",
             reply_markup=self.kb.main_menu(),
@@ -542,7 +574,7 @@ class ManagerHandlers:
 
         await callback.message.edit_text(
             f"✅ <b>Дата выдачи назначена!</b>\n\n"
-            f"📋 {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 {app.amount:,.0f}₽\n"
             f"📅 Формат: {payout_format}\n"
             f"📆 Дата выдачи: {payout_date_str}",
@@ -602,7 +634,7 @@ class ManagerHandlers:
         )
 
         await callback.message.edit_text(
-            f"❌ <b>Заявка {app.external_id} отклонена</b>\n\n"
+            f"❌ <b>{format_application_number(app, for_client=True)} отклонена</b>\n\n"
             f"📝 Причина: {reason}",
             reply_markup=self.kb.main_menu(),
             parse_mode="HTML"
@@ -628,7 +660,7 @@ class ManagerHandlers:
             'paid': '💰 Оплачено'
         }
 
-        text = f"📋 <b>Заявка {app.external_id}</b>\n\n"
+        text = f"📋 <b>{format_application_number(app, for_client=True)}</b>\n\n"
         text += f"📊 Статус: {status_map.get(app.status, app.status)}\n"
         text += f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
         text += f"🏢 ИНН: {app.payer_inn}\n"
