@@ -561,7 +561,7 @@ class AccountantHandlers:
             return
         
         # Сохраняем назначение
-        await self.user_repo.update(db_user.id, default_invoice_purpose=purpose)
+        await self.user_repo.update_by_id(db_user.id, default_invoice_purpose=purpose)
         await state.clear()
         
         await message.answer(
