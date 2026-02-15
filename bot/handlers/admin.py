@@ -38,6 +38,7 @@ class AdminStates(StatesGroup):
     editing_company_director_name = State()  # Редактирование ФИО директора
     waiting_company_bank_account = State()  # Ввод номера счёта при привязке банка
     editing_company_bank_account = State()  # Редактирование номера счёта
+    editing_company_bank_limit = State()  # Редактирование лимита счёта компании
     waiting_company_signature = State()  # Ожидание загрузки подписи
     waiting_company_stamp = State()  # Ожидание загрузки печати
 
@@ -133,6 +134,7 @@ class AdminHandlers:
         self.router.message(AdminStates.editing_company_limit)(self.process_edit_company_limit)
         self.router.message(AdminStates.waiting_company_bank_account)(self.process_company_bank_account)
         self.router.message(AdminStates.editing_company_bank_account)(self.process_edit_company_bank_account)
+        self.router.message(AdminStates.editing_company_bank_limit)(self.process_edit_company_bank_limit)
         self.router.message(AdminStates.waiting_company_signature)(self.process_company_signature)
         self.router.message(AdminStates.waiting_company_stamp)(self.process_company_stamp)
 
@@ -826,6 +828,15 @@ class AdminHandlers:
             weekly_left = company.weekly_limit - company.current_weekly_used
             monthly_left = company.monthly_limit - company.current_monthly_used
 
+            # Получаем общие лимиты со всех счетов
+            company_banks = await self.company_repo.get_company_banks(company_id)
+            total_daily_limit = sum(cb.daily_limit for cb in company_banks)
+            total_weekly_limit = sum(cb.weekly_limit for cb in company_banks)
+            total_monthly_limit = sum(cb.monthly_limit for cb in company_banks)
+            total_daily_used = sum(cb.current_daily_used for cb in company_banks)
+            total_weekly_used = sum(cb.current_weekly_used for cb in company_banks)
+            total_monthly_used = sum(cb.current_monthly_used for cb in company_banks)
+
             zcb_text = ""
             if company.cbr_risk_level:
                 from services.honest_business_api import get_cbr_risk_emoji, get_cbr_risk_name
@@ -853,10 +864,14 @@ class AdminHandlers:
                 f"🔢 ОГРН: <code>{company.ogrn or '—'}</code>\n"
                 f"📊 Статус: {'✅ Активна' if company.is_active else '❌ Неактивна'}\n"
                 f"{zcb_text}\n"
-                f"<b>Лимиты:</b>\n"
+                f"<b>Лимиты компании:</b>\n"
                 f"📅 Дневной: {company.current_daily_used:,.0f} / {company.daily_limit:,.0f}₽ (осталось {daily_left:,.0f}₽)\n"
                 f"📆 Недельный: {company.current_weekly_used:,.0f} / {company.weekly_limit:,.0f}₽\n"
-                f"🗓️ Месячный: {company.current_monthly_used:,.0f} / {company.monthly_limit:,.0f}₽",
+                f"🗓️ Месячный: {company.current_monthly_used:,.0f} / {company.monthly_limit:,.0f}₽\n\n"
+                f"<b>Общие лимиты счетов ({len(company_banks)} счетов):</b>\n"
+                f"📅 Дневной: {total_daily_used:,.0f} / {total_daily_limit:,.0f}₽\n"
+                f"📆 Недельный: {total_weekly_used:,.0f} / {total_weekly_limit:,.0f}₽\n"
+                f"🗓️ Месячный: {total_monthly_used:,.0f} / {total_monthly_limit:,.0f}₽",
                 reply_markup=self.kb.company_actions(
                     company.id,
                     company.is_active,
@@ -938,7 +953,13 @@ class AdminHandlers:
         elif action == "unlink_bank":
             await self.cb_company_unlink_bank(callback, state, db_user)
 
-        # Изменение конкретного лимита
+        elif action == "bank_limits":
+            await self.cb_company_bank_limits(callback, state, db_user)
+
+        elif action == "bank_limit":
+            await self.cb_company_bank_limit_edit(callback, state, db_user)
+
+        # Изменение конкретного лимита компании
         elif action == "limit":
             limit_type = parts[1]
             await state.set_state(AdminStates.editing_company_limit)
@@ -1388,11 +1409,20 @@ class AdminHandlers:
 
         company_banks = await self.company_repo.get_company_banks(company_id)
 
+        # Рассчитываем общие лимиты
+        total_daily = sum(cb.daily_limit for cb in company_banks)
+        total_weekly = sum(cb.weekly_limit for cb in company_banks)
+        total_monthly = sum(cb.monthly_limit for cb in company_banks)
+
         await callback.message.edit_text(
             f"🏢 <b>{company.name}</b>\n\n"
             f"🏦 <b>Банковские счета</b>\n\n"
             f"Всего счетов: {len(company_banks)}\n"
-            f"⭐ = основной счёт",
+            f"⭐ = основной счёт\n\n"
+            f"<b>Общий лимит по всем счетам:</b>\n"
+            f"📅 Дневной: {total_daily:,.0f}₽\n"
+            f"📆 Недельный: {total_weekly:,.0f}₽\n"
+            f"🗓️ Месячный: {total_monthly:,.0f}₽",
             reply_markup=self.kb.company_banks_list(company_id, company_banks),
             parse_mode="HTML"
         )
@@ -1505,7 +1535,11 @@ class AdminHandlers:
             f"🔢 БИК: <code>{bank.bik or '—'}</code>\n"
             f"💳 Корр. счёт: <code>{bank.corr_account or '—'}</code>\n"
             f"💳 Р/счёт: <code>{company_bank.account_number or '—'}</code>\n"
-            f"{preferred_text}",
+            f"{preferred_text}\n\n"
+            f"<b>Лимиты счёта:</b>\n"
+            f"📅 Дневной: {company_bank.current_daily_used:,.0f} / {company_bank.daily_limit:,.0f}₽\n"
+            f"📆 Недельный: {company_bank.current_weekly_used:,.0f} / {company_bank.weekly_limit:,.0f}₽\n"
+            f"🗓️ Месячный: {company_bank.current_monthly_used:,.0f} / {company_bank.monthly_limit:,.0f}₽",
             reply_markup=self.kb.company_bank_actions(company_bank_id, company_id, company_bank.is_preferred),
             parse_mode="HTML"
         )
@@ -1597,6 +1631,96 @@ class AdminHandlers:
             f"Всего счетов: {len(company_banks)}\n"
             f"⭐ = основной счёт",
             reply_markup=self.kb.company_banks_list(company_id, company_banks),
+            parse_mode="HTML"
+        )
+
+    async def cb_company_bank_limits(self, callback: CallbackQuery, state: FSMContext, db_user):
+        """Меню лимитов счёта компании"""
+        parts = callback.data.split(":")
+        company_bank_id = int(parts[-2])
+        company_id = int(parts[-1])
+
+        company_bank = await self.company_repo.get_company_bank_by_id(company_bank_id)
+
+        if not company_bank:
+            await callback.answer("Счёт не найден", show_alert=True)
+            return
+
+        bank = company_bank.bank
+
+        await callback.message.edit_text(
+            f"💰 <b>Лимиты счёта</b>\n\n"
+            f"🏦 Банк: {bank.name}\n"
+            f"💳 Счёт: <code>{company_bank.account_number or '—'}</code>\n\n"
+            f"📊 <b>Текущие лимиты:</b>\n"
+            f"  Дневной: {company_bank.daily_limit:,.0f}₽ (использовано: {company_bank.current_daily_used:,.0f}₽)\n"
+            f"  Недельный: {company_bank.weekly_limit:,.0f}₽ (использовано: {company_bank.current_weekly_used:,.0f}₽)\n"
+            f"  Месячный: {company_bank.monthly_limit:,.0f}₽ (использовано: {company_bank.current_monthly_used:,.0f}₽)",
+            reply_markup=self.kb.company_bank_limits_menu(company_bank_id, company_id),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+
+    async def cb_company_bank_limit_edit(self, callback: CallbackQuery, state: FSMContext, db_user):
+        """Начать редактирование лимита счёта"""
+        parts = callback.data.split(":")
+        limit_type = parts[3]
+        company_bank_id = int(parts[4])
+        company_id = int(parts[5])
+
+        await state.set_state(AdminStates.editing_company_bank_limit)
+        await state.update_data(
+            editing_company_bank_id=company_bank_id,
+            editing_company_id=company_id,
+            limit_type=limit_type
+        )
+
+        limit_names = {'daily': 'дневной', 'weekly': 'недельный', 'monthly': 'месячный'}
+        limit_name = limit_names.get(limit_type, limit_type)
+
+        await callback.message.edit_text(
+            f"✏️ Введите новый {limit_name} лимит (в рублях):\n\n"
+            f"<i>Например: 5000000 (5 миллионов рублей)</i>",
+            reply_markup=self.kb.cancel_input(),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+
+    async def process_edit_company_bank_limit(self, message: Message, state: FSMContext, db_user):
+        """Обработка нового лимита счёта"""
+        limit_text = message.text.strip().replace(" ", "").replace(",", "")
+
+        if not limit_text.isdigit():
+            await message.answer(
+                "❌ Введите корректное число (только цифры).",
+                reply_markup=self.kb.cancel_input()
+            )
+            return
+
+        limit_value = int(limit_text)
+        data = await state.get_data()
+        company_bank_id = data['editing_company_bank_id']
+        limit_type = data['limit_type']
+
+        await state.clear()
+
+        # Обновляем соответствующий лимит
+        update_fields = {}
+        if limit_type == 'daily':
+            update_fields['daily_limit'] = limit_value
+        elif limit_type == 'weekly':
+            update_fields['weekly_limit'] = limit_value
+        elif limit_type == 'monthly':
+            update_fields['monthly_limit'] = limit_value
+
+        await self.company_repo.update_company_bank(company_bank_id, **update_fields)
+
+        limit_names = {'daily': 'Дневной', 'weekly': 'Недельный', 'monthly': 'Месячный'}
+        limit_name = limit_names.get(limit_type, limit_type)
+
+        await message.answer(
+            f"✅ {limit_name} лимит изменён: <b>{limit_value:,.0f}₽</b>",
+            reply_markup=self.kb.back_to_menu(),
             parse_mode="HTML"
         )
 
@@ -2087,13 +2211,25 @@ class AdminHandlers:
             if count > 0:
                 text += f"  {name}: {count}\n"
 
-        text += f"\n<b>Компании:</b> {len(companies)}\n"
-        active_companies = len([c for c in companies if c.is_active])
-        text += f"  ✅ Активных: {active_companies}\n"
+        # Активные компании
+        active_companies = [c for c in companies if c.is_active]
+        text += f"\n<b>Компании ({len(companies)}):</b>\n"
+        text += f"  ✅ Активных: {len(active_companies)}\n"
+        if active_companies:
+            for company in active_companies[:10]:  # Показываем первые 10
+                # Получаем количество счетов компании
+                company_banks = await self.company_repo.get_company_banks(company.id)
+                text += f"    🏢 {company.name} ({len(company_banks)} счетов)\n"
+            if len(active_companies) > 10:
+                text += f"    ... и еще {len(active_companies) - 10}\n"
 
-        text += f"\n<b>Банки:</b> {len(banks)}\n"
-        active_banks = len([b for b in banks if b.is_active and b.is_available])
-        text += f"  🟢 Принимают заявки: {active_banks}\n"
+        # Принимающие банки
+        accepting_banks = [b for b in banks if b.is_active and b.is_available]
+        text += f"\n<b>Банки ({len(banks)}):</b>\n"
+        text += f"  🟢 Принимают заявки: {len(accepting_banks)}\n"
+        if accepting_banks:
+            for bank in accepting_banks:
+                text += f"    🏦 {bank.name}\n"
 
         text += f"\n<b>Заявки за сегодня:</b>\n"
         text += f"  📋 Всего: {total_apps}\n"
@@ -2153,10 +2289,23 @@ class AdminHandlers:
             'paid': {'count': 0, 'amount': 0}
         }
 
+        # Статистика по клиентам
+        client_stats = {}
         for app in apps:
             if app.status in payment_stats:
                 payment_stats[app.status]['count'] += 1
                 payment_stats[app.status]['amount'] += float(app.amount)
+
+            # Группируем по клиентам (только для invoice_sent и paid)
+            if app.status in ['invoice_sent', 'client_confirmed', 'payment_received', 'paid']:
+                client_id = app.client_chat_id
+                if client_id not in client_stats:
+                    client_stats[client_id] = {'issued': 0, 'paid': 0}
+
+                if app.status in ['invoice_sent', 'client_confirmed', 'payment_received']:
+                    client_stats[client_id]['issued'] += 1
+                elif app.status == 'paid':
+                    client_stats[client_id]['paid'] += 1
 
         text = f"💳 <b>Статистика по оплатам</b>\n"
         text += f"<i>За последние 7 дней</i>\n\n"
@@ -2175,7 +2324,20 @@ class AdminHandlers:
 
         text += f"💵 <b>Оплачено:</b>\n"
         text += f"  Заявок: {payment_stats['paid']['count']}\n"
-        text += f"  Сумма: {payment_stats['paid']['amount']:,.0f}₽\n"
+        text += f"  Сумма: {payment_stats['paid']['amount']:,.0f}₽\n\n"
+
+        # Статистика по клиентам
+        if client_stats:
+            text += f"<b>По клиентам:</b>\n"
+            # Сортируем по количеству выставленных счетов
+            sorted_clients = sorted(client_stats.items(), key=lambda x: x[1]['issued'], reverse=True)
+            for client_id, stats in sorted_clients[:20]:  # Топ-20
+                user = await self.user_repo.get_by_telegram_id(client_id)
+                client_name = user.username if user and user.username else f"ID {client_id}"
+                text += f"  👤 @{client_name}: выставлено {stats['issued']}, оплачено {stats['paid']} из {stats['issued']}\n"
+
+            if len(sorted_clients) > 20:
+                text += f"  ... и еще {len(sorted_clients) - 20} клиентов\n"
 
         await callback.message.edit_text(
             text,
