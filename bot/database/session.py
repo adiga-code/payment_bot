@@ -141,6 +141,12 @@ class DatabaseManager:
                 "counter_date TIMESTAMP"
             ))
 
+            # Отображаемое имя для сотрудников
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "display_name VARCHAR(200)"
+            ))
+
             # Лимиты и счетчики для счетов компаний в банках
             await conn.execute(text(
                 "ALTER TABLE company_banks ADD COLUMN IF NOT EXISTS "

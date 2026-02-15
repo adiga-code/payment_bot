@@ -68,7 +68,8 @@ class AdminKeyboards:
         for user in page_users:
             emoji = role_emoji.get(user.role, '👤')
             status = '✅' if user.is_active else '❌'
-            name = user.first_name or user.username or str(user.telegram_id)
+            # Приоритет: display_name > first_name > username > telegram_id
+            name = user.display_name or user.first_name or user.username or str(user.telegram_id)
             builder.row(
                 InlineKeyboardButton(
                     text=f"{emoji}{status} {name[:20]} ({user.role})",
@@ -101,6 +102,9 @@ class AdminKeyboards:
 
         builder.row(
             InlineKeyboardButton(text="🔄 Изменить роль", callback_data=f"admin:user:role:{user_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="✏️ Изменить имя", callback_data=f"admin:user:edit_name:{user_id}")
         )
 
         if is_active:

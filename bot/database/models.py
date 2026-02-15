@@ -37,6 +37,7 @@ class User(Base):
         nullable=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)  # Отображаемое имя для сотрудников
 
     # Настройки бухгалтера
     default_invoice_purpose: Mapped[str | None] = mapped_column(Text, nullable=True)  # Назначение платежа по умолчанию

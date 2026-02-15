@@ -246,8 +246,17 @@ class BankHandlers:
 
     async def _validate_bank_access(self, callback: CallbackQuery, db_user) -> bool:
         """Проверяет, что сотрудник банка имеет доступ к группе."""
+        # Супервайзеры и админы могут всё
         if db_user.role in ('supervisor', 'admin'):
             return True
+
+        # Только сотрудники банка могут нажимать кнопки в группе
+        if db_user.role != 'bank':
+            await callback.answer(
+                "⛔️ Только сотрудники банка могут оценивать риски",
+                show_alert=True
+            )
+            return False
 
         bank = await self.bank_repo.get_by_chat_id(callback.message.chat.id)
         if not bank:

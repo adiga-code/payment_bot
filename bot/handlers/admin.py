@@ -25,6 +25,7 @@ class AdminStates(StatesGroup):
     # Пользователи
     waiting_user_forward = State()  # Ожидание пересланного сообщения для добавления
     waiting_user_role = State()  # Ожидание выбора роли для нового пользователя
+    editing_user_display_name = State()  # Редактирование отображаемого имени
 
     # Компании
     waiting_company_name = State()
@@ -112,6 +113,7 @@ class AdminHandlers:
 
         # FSM: добавление пользователя
         self.router.message(AdminStates.waiting_user_forward)(self.process_user_forward)
+        self.router.message(AdminStates.editing_user_display_name)(self.process_edit_user_display_name)
 
         # ===== КОМПАНИИ =====
         self.router.callback_query(F.data == "admin:companies")(self.cb_companies_menu)
@@ -334,6 +336,37 @@ class AdminHandlers:
             parse_mode="HTML"
         )
 
+    async def process_edit_user_display_name(self, message: Message, state: FSMContext, db_user):
+        """Обработка ввода нового отображаемого имени"""
+        new_name = message.text.strip()
+
+        if not new_name or len(new_name) > 200:
+            await message.answer(
+                "❌ Имя должно быть от 1 до 200 символов. Попробуйте еще раз:"
+            )
+            return
+
+        data = await state.get_data()
+        user_id = data.get('edit_user_id')
+
+        if not user_id:
+            await message.answer("❌ Ошибка: данные потеряны")
+            await state.clear()
+            return
+
+        # Обновляем display_name
+        await self.user_repo.update_by_id(user_id, display_name=new_name)
+        await state.clear()
+
+        user = await self.user_repo.get_by_id(user_id)
+
+        await message.answer(
+            f"✅ <b>Имя обновлено!</b>\n\n"
+            f"Новое отображаемое имя: <i>{new_name}</i>",
+            reply_markup=self.kb.user_actions(user.id, user.is_active),
+            parse_mode="HTML"
+        )
+
     async def cb_user_action(self, callback: CallbackQuery, state: FSMContext, db_user):
         """Обработка действий с пользователем"""
         data = callback.data.replace("admin:user:", "")
@@ -358,13 +391,22 @@ class AdminHandlers:
                 'admin': '⚙️ Администратор'
             }
 
+            # Отображаемое имя (приоритет display_name, затем first_name/last_name)
+            display_name_text = user.display_name or f"{user.first_name or '—'} {user.last_name or ''}".strip()
+            if not display_name_text or display_name_text == '—':
+                display_name_text = f"ID {user.telegram_id}"
+
             text = (
                 f"👤 <b>Пользователь</b>\n\n"
                 f"🆔 ID: <code>{user.telegram_id}</code>\n"
                 f"📛 Username: @{user.username or '—'}\n"
-                f"👤 Имя: {user.first_name or '—'} {user.last_name or ''}\n"
-                f"🎭 Роль: {role_names.get(user.role, user.role)}\n"
+                f"👤 Имя: {display_name_text}\n"
             )
+
+            if user.display_name:
+                text += f"<i>(Оригинальное: {user.first_name or '—'} {user.last_name or ''})</i>\n"
+
+            text += f"🎭 Роль: {role_names.get(user.role, user.role)}\n"
 
             # Показываем привязку к банку для сотрудников банка
             if user.bank_id:
@@ -382,6 +424,28 @@ class AdminHandlers:
             await callback.message.edit_text(
                 text,
                 reply_markup=self.kb.user_actions(user.id, user.is_active),
+                parse_mode="HTML"
+            )
+            await callback.answer()
+            return
+
+        # Изменение отображаемого имени
+        if action == "edit_name":
+            user_id = int(parts[1])
+            user = await self.user_repo.get_by_id(user_id)
+            if not user:
+                await callback.answer("Пользователь не найден", show_alert=True)
+                return
+
+            current_name = user.display_name or f"{user.first_name or ''} {user.last_name or ''}".strip() or f"ID {user.telegram_id}"
+
+            await state.update_data(edit_user_id=user_id)
+            await state.set_state(AdminStates.editing_user_display_name)
+
+            await callback.message.edit_text(
+                f"✏️ <b>Изменение отображаемого имени</b>\n\n"
+                f"Текущее имя: <i>{current_name}</i>\n\n"
+                f"Введите новое имя для отображения в списках:",
                 parse_mode="HTML"
             )
             await callback.answer()
