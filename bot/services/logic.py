@@ -81,14 +81,22 @@ class LogicService:
                 )
                 # Обновляем данные плательщика из ЗЧБ
                 update_fields = {}
-                if check_result.get('name'):
+                # Приоритет: полное название > краткое название > общее название
+                if check_result.get('full_name'):
+                    update_fields['payer_name'] = check_result['full_name']
+                elif check_result.get('short_name'):
+                    update_fields['payer_name'] = check_result['short_name']
+                elif check_result.get('name'):
                     update_fields['payer_name'] = check_result['name']
+
                 if check_result.get('kpp'):
                     update_fields['payer_kpp'] = check_result['kpp']
                 if check_result.get('address'):
                     update_fields['payer_address'] = check_result['address']
+
                 if update_fields:
                     await self.application_repo.update_by_id(app.id, **update_fields)
+                    logger.info(f"Application {app.external_id} updated with ZCB data: {update_fields}")
 
                 # Если есть госзакупки — отправляем на ручную проверку менеджеру
                 if has_gov_contracts:

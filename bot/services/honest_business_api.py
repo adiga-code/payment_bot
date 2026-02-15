@@ -84,6 +84,34 @@ class ZCBService:
             logger.error(f"ZCB API неожиданная ошибка для {method}: {e}")
             return None
 
+    async def get_card(self, ogrn: str) -> Optional[dict]:
+        """
+        Получить полную карточку компании по ОГРН.
+
+        Returns:
+            dict с полными данными компании из карточки
+            или None если не найдено
+        """
+        body = await self._request('card', {'id': ogrn})
+        if not body:
+            return None
+
+        logger.info(f"ZCB card result for OGRN {ogrn}: {body}")
+
+        return {
+            'ogrn': body.get('ОГРН'),
+            'inn': body.get('ИНН'),
+            'kpp': body.get('КПП'),
+            'full_name': body.get('НаимЮЛПолн'),
+            'short_name': body.get('НаимЮЛСокр'),
+            'address': body.get('Адрес'),
+            'director': body.get('Руководитель'),
+            'authorized_capital': body.get('УставнойКапитал'),
+            'registration_date': body.get('ДатаРег'),
+            'status': body.get('Статус'),
+            'raw': body,
+        }
+
     async def search(self, inn: str) -> Optional[dict]:
         """
         Поиск компании по ИНН. Возвращает первый результат.
@@ -193,9 +221,10 @@ class ZCBService:
     async def check_payer(self, inn: str) -> dict:
         """
         Полная проверка плательщика по ИНН:
-        1. Поиск компании (ИНН → ОГРН + название)
-        2. Получение риска ЦБ РФ по ОГРН
-        3. Проверка госзакупок
+        1. Поиск компании (ИНН → ОГРН)
+        2. Получение полной карточки компании по ОГРН (card endpoint)
+        3. Получение риска ЦБ РФ по ОГРН
+        4. Проверка госзакупок
 
         Returns:
             dict с результатами проверки (всегда возвращает dict, даже при ошибках)
@@ -203,9 +232,13 @@ class ZCBService:
         result = {
             'inn': inn,
             'name': None,
+            'full_name': None,
+            'short_name': None,
             'ogrn': None,
             'kpp': None,
             'address': None,
+            'director': None,
+            'registration_date': None,
             'rating_category': None,
             'risk_level': None,
             'stop': None,
@@ -217,30 +250,48 @@ class ZCBService:
             'errors': [],
         }
 
-        # 1. Поиск по ИНН
+        # 1. Поиск по ИНН для получения ОГРН
         search_data = await self.search(inn)
         if not search_data:
             result['errors'].append('search_failed')
             return result
 
-        result['name'] = search_data.get('name')
-        result['ogrn'] = search_data.get('ogrn')
-        result['kpp'] = search_data.get('kpp')
-        result['address'] = search_data.get('address')
-
-        # 2. Риск ЦБ РФ по ОГРН
         ogrn = search_data.get('ogrn')
         if not ogrn:
             result['errors'].append('ogrn_not_found')
+            # Сохраняем хотя бы данные из search
+            result['name'] = search_data.get('name')
+            result['kpp'] = search_data.get('kpp')
+            result['address'] = search_data.get('address')
             return result
 
+        result['ogrn'] = ogrn
+
+        # 2. Получение полной карточки по ОГРН
+        card_data = await self.get_card(ogrn)
+        if card_data:
+            result['full_name'] = card_data.get('full_name')
+            result['short_name'] = card_data.get('short_name')
+            result['name'] = card_data.get('full_name') or card_data.get('short_name')
+            result['kpp'] = card_data.get('kpp')
+            result['address'] = card_data.get('address')
+            result['director'] = card_data.get('director')
+            result['registration_date'] = card_data.get('registration_date')
+        else:
+            # Если card не вернул данные, используем данные из search
+            result['errors'].append('card_failed')
+            result['name'] = search_data.get('name')
+            result['kpp'] = search_data.get('kpp')
+            result['address'] = search_data.get('address')
+
+        # 3. Риск ЦБ РФ по ОГРН
         cbr_risk = await self.get_cbr_rating(ogrn)
         if not cbr_risk:
             result['errors'].append('cbr_rating_failed')
         else:
             result['cbr_risk'] = cbr_risk
 
-        # 3. Проверка госзакупок
+        # 4. Проверка госзакупок
         zakupki = await self.check_zakupki(inn)
         if zakupki:
             result['zakupki'] = zakupki
