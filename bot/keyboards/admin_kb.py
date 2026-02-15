@@ -367,6 +367,10 @@ class AdminKeyboards:
             InlineKeyboardButton(text="✏️ Изменить номер счёта", callback_data=f"admin:company:edit_account:{company_bank_id}:{company_id}")
         )
 
+        builder.row(
+            InlineKeyboardButton(text="💰 Лимиты", callback_data=f"admin:company:bank_limits:{company_bank_id}:{company_id}")
+        )
+
         if is_preferred:
             builder.row(
                 InlineKeyboardButton(text="⭐ Основной счёт", callback_data="noop")
@@ -381,6 +385,25 @@ class AdminKeyboards:
         )
         builder.row(
             InlineKeyboardButton(text="🔙 Назад", callback_data=f"admin:company:banks:{company_id}")
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def company_bank_limits_menu(company_bank_id: int, company_id: int) -> InlineKeyboardMarkup:
+        """Меню лимитов счёта компании"""
+        builder = InlineKeyboardBuilder()
+
+        builder.row(
+            InlineKeyboardButton(text="📅 Дневной лимит", callback_data=f"admin:company:bank_limit:edit:daily:{company_bank_id}:{company_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="📆 Недельный лимит", callback_data=f"admin:company:bank_limit:edit:weekly:{company_bank_id}:{company_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="📊 Месячный лимит", callback_data=f"admin:company:bank_limit:edit:monthly:{company_bank_id}:{company_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="🔙 Назад", callback_data=f"admin:company:bank:{company_bank_id}:{company_id}")
         )
         return builder.as_markup()
 
