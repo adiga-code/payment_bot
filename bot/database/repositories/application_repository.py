@@ -97,7 +97,17 @@ class ApplicationRepository(BaseRepository[Application]):
                 .order_by(Application.created_at.desc())
             )
             return list(result.scalars().all())
-    
+
+    async def get_by_client(self, client_chat_id: int) -> List[Application]:
+        """Получить заявки клиента"""
+        async with self.session_maker() as session:
+            result = await session.execute(
+                select(Application)
+                .where(Application.client_chat_id == client_chat_id)
+                .order_by(Application.created_at.desc())
+            )
+            return list(result.scalars().all())
+
     # ==================== ОБНОВЛЕНИЕ СТАТУСОВ ====================
     
     async def update_status(self, app_id: int, new_status: str) -> bool:
