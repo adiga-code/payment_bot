@@ -155,3 +155,65 @@ class SupervisorKeyboards:
             InlineKeyboardButton(text="🔙 В меню", callback_data="sv:menu")
         )
         return builder.as_markup()
+
+    @staticmethod
+    def stats_menu() -> InlineKeyboardMarkup:
+        """Меню выбора периода статистики"""
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="📅 Сегодня", callback_data="sv:stats:today")
+        )
+        builder.row(
+            InlineKeyboardButton(text="📆 Неделя", callback_data="sv:stats:week"),
+            InlineKeyboardButton(text="📊 Месяц", callback_data="sv:stats:month")
+        )
+        builder.row(
+            InlineKeyboardButton(text="🗓 Произвольный период", callback_data="sv:stats:custom")
+        )
+        builder.row(
+            InlineKeyboardButton(text="🔙 В меню", callback_data="sv:menu")
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def stats_detail_menu(start_date, end_date) -> InlineKeyboardMarkup:
+        """Меню детализации статистики"""
+        from datetime import date
+        builder = InlineKeyboardBuilder()
+
+        start_str = start_date.isoformat()
+        end_str = end_date.isoformat()
+
+        builder.row(
+            InlineKeyboardButton(
+                text="🏢 По компаниям",
+                callback_data=f"sv:stats:detail:by_company:{start_str}:{end_str}"
+            ),
+            InlineKeyboardButton(
+                text="🏦 По банкам",
+                callback_data=f"sv:stats:detail:by_bank:{start_str}:{end_str}"
+            )
+        )
+        builder.row(
+            InlineKeyboardButton(
+                text="👤 По клиентам",
+                callback_data=f"sv:stats:detail:by_client:{start_str}:{end_str}"
+            ),
+            InlineKeyboardButton(
+                text="📅 По датам",
+                callback_data=f"sv:stats:detail:by_date:{start_str}:{end_str}"
+            )
+        )
+        builder.row(
+            InlineKeyboardButton(text="🔙 К статистике", callback_data="sv:stats")
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def back_to_stats() -> InlineKeyboardMarkup:
+        """Кнопка возврата к статистике"""
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="🔙 К статистике", callback_data="sv:stats")
+        )
+        return builder.as_markup()

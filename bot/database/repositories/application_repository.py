@@ -278,7 +278,162 @@ class ApplicationRepository(BaseRepository[Application]):
                 'conversion_rate': (paid / total * 100) if total > 0 else 0,
                 'rejection_rate': (rejected / total * 100) if total > 0 else 0
             }
-    
+
+    async def get_stats_by_client(
+        self,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> List[dict]:
+        """Статистика по клиентам"""
+        async with self.session_maker() as session:
+            query = select(
+                Application.client_chat_id,
+                func.count().label('count'),
+                func.sum(Application.amount).label('total_amount')
+            ).group_by(Application.client_chat_id)
+
+            if start_date:
+                query = query.where(func.date(Application.created_at) >= start_date)
+            if end_date:
+                query = query.where(func.date(Application.created_at) <= end_date)
+
+            result = await session.execute(query)
+
+            return [
+                {
+                    'client_chat_id': row.client_chat_id,
+                    'count': row.count,
+                    'total_amount': float(row.total_amount) if row.total_amount else 0
+                }
+                for row in result.all()
+            ]
+
+    async def get_stats_by_bank(
+        self,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> List[dict]:
+        """Статистика по банкам"""
+        async with self.session_maker() as session:
+            query = select(
+                Application.bank_id,
+                func.count().label('count'),
+                func.sum(Application.amount).label('total_amount')
+            ).group_by(Application.bank_id)
+
+            if start_date:
+                query = query.where(func.date(Application.created_at) >= start_date)
+            if end_date:
+                query = query.where(func.date(Application.created_at) <= end_date)
+
+            result = await session.execute(query)
+
+            return [
+                {
+                    'bank_id': row.bank_id,
+                    'count': row.count,
+                    'total_amount': float(row.total_amount) if row.total_amount else 0
+                }
+                for row in result.all()
+            ]
+
+    async def get_detailed_stats(
+        self,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> dict:
+        """Детальная статистика за период"""
+        async with self.session_maker() as session:
+            # Базовый запрос с фильтрацией по датам
+            base_query = select(Application)
+            if start_date:
+                base_query = base_query.where(func.date(Application.created_at) >= start_date)
+            if end_date:
+                base_query = base_query.where(func.date(Application.created_at) <= end_date)
+
+            result = await session.execute(base_query)
+            apps = result.scalars().all()
+
+            # Подсчет общей статистики
+            total_count = len(apps)
+            total_amount = sum(app.amount for app in apps)
+
+            # Группировка по статусам
+            by_status = {}
+            for app in apps:
+                if app.status not in by_status:
+                    by_status[app.status] = {'count': 0, 'amount': 0}
+                by_status[app.status]['count'] += 1
+                by_status[app.status]['amount'] += float(app.amount)
+
+            # Группировка по компаниям
+            by_company = {}
+            for app in apps:
+                if app.company_id:
+                    if app.company_id not in by_company:
+                        by_company[app.company_id] = {'count': 0, 'amount': 0}
+                    by_company[app.company_id]['count'] += 1
+                    by_company[app.company_id]['amount'] += float(app.amount)
+
+            # Группировка по банкам
+            by_bank = {}
+            for app in apps:
+                if app.bank_id:
+                    if app.bank_id not in by_bank:
+                        by_bank[app.bank_id] = {'count': 0, 'amount': 0}
+                    by_bank[app.bank_id]['count'] += 1
+                    by_bank[app.bank_id]['amount'] += float(app.amount)
+
+            # Группировка по клиентам
+            by_client = {}
+            for app in apps:
+                if app.client_chat_id:
+                    if app.client_chat_id not in by_client:
+                        by_client[app.client_chat_id] = {'count': 0, 'amount': 0}
+                    by_client[app.client_chat_id]['count'] += 1
+                    by_client[app.client_chat_id]['amount'] += float(app.amount)
+
+            # Группировка по датам
+            by_date = {}
+            for app in apps:
+                app_date = app.created_at.date()
+                if app_date not in by_date:
+                    by_date[app_date] = {'count': 0, 'amount': 0}
+                by_date[app_date]['count'] += 1
+                by_date[app_date]['amount'] += float(app.amount)
+
+            return {
+                'total_count': total_count,
+                'total_amount': float(total_amount),
+                'by_status': by_status,
+                'by_company': by_company,
+                'by_bank': by_bank,
+                'by_client': by_client,
+                'by_date': by_date
+            }
+
+    async def get_applications_by_period(
+        self,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        status: Optional[str] = None
+    ) -> List[Application]:
+        """Получить заявки за период с опциональным фильтром по статусу"""
+        async with self.session_maker() as session:
+            query = select(Application)
+
+            if start_date:
+                query = query.where(func.date(Application.created_at) >= start_date)
+            if end_date:
+                query = query.where(func.date(Application.created_at) <= end_date)
+            if status:
+                query = query.where(Application.status == status)
+
+            query = query.order_by(Application.created_at.desc())
+
+            result = await session.execute(query)
+            return list(result.scalars().all())
+
     async def get_pending_primary_check(self) -> List[Application]:
         """Получить заявки, ожидающие первичной проверки"""
         async with self.session_maker() as session:
