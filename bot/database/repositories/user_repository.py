@@ -124,7 +124,7 @@ class UserRepository(BaseRepository[User]):
             if user.counter_date is None or user.counter_date.date() < today_msk:
                 # Новый день - сбрасываем счетчик
                 user.daily_application_counter = 1
-                user.counter_date = now_msk
+                user.counter_date = now_msk.replace(tzinfo=None)  # Убираем timezone для сохранения в БД
             else:
                 # Тот же день - инкрементируем
                 user.daily_application_counter += 1
@@ -142,7 +142,7 @@ class UserRepository(BaseRepository[User]):
         return await self.update_by_id(
             user_id,
             daily_application_counter=0,
-            counter_date=now_msk
+            counter_date=now_msk.replace(tzinfo=None)  # Убираем timezone для сохранения в БД
         )
 
     async def reset_all_daily_counters(self) -> int:
@@ -157,7 +157,7 @@ class UserRepository(BaseRepository[User]):
                 .where(User.role == 'client')  # Только для клиентов
                 .values(
                     daily_application_counter=0,
-                    counter_date=now_msk
+                    counter_date=now_msk.replace(tzinfo=None)  # Убираем timezone для сохранения в БД
                 )
             )
             result = await session.execute(stmt)

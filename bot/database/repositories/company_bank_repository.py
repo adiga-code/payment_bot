@@ -109,7 +109,7 @@ class CompanyBankRepository(BaseRepository[CompanyBank]):
             if cb.counter_date is None or cb.counter_date.date() < today_msk:
                 # Новый день - сбрасываем счетчик
                 cb.daily_application_counter = 1
-                cb.counter_date = now_msk
+                cb.counter_date = now_msk.replace(tzinfo=None)  # Убираем timezone для сохранения в БД
             else:
                 # Тот же день - инкрементируем
                 cb.daily_application_counter += 1
@@ -127,7 +127,7 @@ class CompanyBankRepository(BaseRepository[CompanyBank]):
         return await self.update_by_id(
             company_bank_id,
             daily_application_counter=0,
-            counter_date=now_msk
+            counter_date=now_msk.replace(tzinfo=None)  # Убираем timezone для сохранения в БД
         )
 
     async def reset_all_daily_counters(self) -> int:
@@ -141,7 +141,7 @@ class CompanyBankRepository(BaseRepository[CompanyBank]):
                 update(CompanyBank)
                 .values(
                     daily_application_counter=0,
-                    counter_date=now_msk
+                    counter_date=now_msk.replace(tzinfo=None)  # Убираем timezone для сохранения в БД
                 )
             )
             result = await session.execute(stmt)
