@@ -272,7 +272,7 @@ class ZCBService:
         if card_data:
             result['full_name'] = card_data.get('full_name')
             result['short_name'] = card_data.get('short_name')
-            result['name'] = card_data.get('full_name') or card_data.get('short_name')
+            result['name'] = card_data.get('short_name') or card_data.get('full_name')
             result['kpp'] = card_data.get('kpp')
             result['address'] = card_data.get('address')
             result['director'] = card_data.get('director')
