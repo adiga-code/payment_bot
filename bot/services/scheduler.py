@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, time, timedelta
 from typing import Optional
 
-from database import CompanyRepository, BankRepository, ApplicationRepository
+from database import CompanyRepository, BankRepository, ApplicationRepository, UserRepository, CompanyBankRepository
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +17,15 @@ class SchedulerService:
         self,
         company_repo: CompanyRepository,
         bank_repo: BankRepository,
+        user_repo: UserRepository,
+        company_bank_repo: CompanyBankRepository,
         application_repo: Optional[ApplicationRepository] = None,
         notification_service=None
     ):
         self.company_repo = company_repo
         self.bank_repo = bank_repo
+        self.user_repo = user_repo
+        self.company_bank_repo = company_bank_repo
         self.application_repo = application_repo
         self.notification_service = notification_service
         self._tasks: list[asyncio.Task] = []
@@ -31,6 +35,7 @@ class SchedulerService:
         self._tasks.append(asyncio.create_task(self._daily_reset_loop()))
         self._tasks.append(asyncio.create_task(self._weekly_reset_loop()))
         self._tasks.append(asyncio.create_task(self._monthly_reset_loop()))
+        self._tasks.append(asyncio.create_task(self._application_counter_reset_loop()))
 
         # Задачи для payment confirmation flow (если репозитории доступны)
         if self.application_repo and self.notification_service:
@@ -108,6 +113,25 @@ class SchedulerService:
                 break
             except Exception as e:
                 logger.error(f"Error in monthly reset: {e}")
+                await asyncio.sleep(60)
+
+    async def _application_counter_reset_loop(self):
+        """Сброс счетчиков заявок каждый день в 00:00 MSK (21:00 UTC)"""
+        while True:
+            try:
+                sleep_sec = await self._seconds_until(time(21, 0))
+                await asyncio.sleep(sleep_sec)
+
+                # Сбрасываем счетчики клиентов
+                users_reset = await self.user_repo.reset_all_daily_counters()
+                # Сбрасываем счетчики компаний в банках
+                company_banks_reset = await self.company_bank_repo.reset_all_daily_counters()
+
+                logger.info(f"Application counters reset: {users_reset} clients, {company_banks_reset} company-bank accounts")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in application counter reset: {e}")
                 await asyncio.sleep(60)
 
     # ==================== PAYMENT CONFIRMATION TASKS ====================

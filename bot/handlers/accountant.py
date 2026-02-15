@@ -18,6 +18,7 @@ from services.notification import NotificationService
 from services.document import DocumentService
 from keyboards.accountant_kb import AccountantKeyboards
 from middleware import RoleRequiredMiddleware
+from utils import format_application_number
 
 
 class AccountantStates(StatesGroup):
@@ -191,7 +192,7 @@ class AccountantHandlers:
 
         text = (
             f"📄 <b>Счёт {doc.number}</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
             f"🏢 Компания: {company_name}\n"
             f"🏦 Банк: {bank_name}\n"
@@ -270,7 +271,7 @@ class AccountantHandlers:
                     caption=(
                         f"📄 <b>Счёт на оплату {doc.number}</b>\n\n"
                         f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
-                        f"📋 Заявка: {app.external_id}"
+                        f"📋 {format_application_number(app, for_client=True)}"
                     ),
                     parse_mode="HTML"
                 )
@@ -320,7 +321,7 @@ class AccountantHandlers:
 
         await callback.message.edit_text(
             f"✅ <b>Счёт {doc.number} отправлен клиенту!</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n\n"
             f"⏳ Ожидаем подтверждения оплаты от клиента.",
             reply_markup=self.kb.back_to_menu(),
@@ -375,7 +376,7 @@ class AccountantHandlers:
         text = (
             f"🔄 <b>Счёт перегенерирован</b>\n\n"
             f"📄 Новый: <b>{new_doc.number}</b>\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
             f"🏢 Компания: {company_name}\n"
             f"🏦 Банк: {bank_name}\n\n"
@@ -484,7 +485,7 @@ class AccountantHandlers:
 
         await callback.message.edit_text(
             f"✅ <b>Получение средств подтверждено!</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n\n"
             f"📤 Менеджер уведомлён для выбора формата выдачи.",
             parse_mode="HTML"
@@ -524,7 +525,7 @@ class AccountantHandlers:
 
         await callback.message.edit_text(
             f"❌ <b>Средства не поступили</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n\n"
             f"⚠️ Заявка аннулирована. Клиент уведомлён.",
             parse_mode="HTML"

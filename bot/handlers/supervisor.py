@@ -20,6 +20,7 @@ from services.notification import NotificationService
 from services.document import DocumentService
 from keyboards.supervisor_kb import SupervisorKeyboards
 from middleware import RoleRequiredMiddleware
+from utils import format_application_number
 
 
 class RejectReasonState(StatesGroup):
@@ -307,7 +308,7 @@ class SupervisorHandlers:
 
             await callback.message.edit_text(
                 f"✅ <b>Минимальный риск одобрен!</b>\n\n"
-                f"📋 {app.external_id}\n"
+                f"📋 {format_application_number(app, for_client=True)}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
                 f"📝 Клиенту отправлен запрос на данные договора.",
                 reply_markup=self.kb.back_to_menu(),
@@ -358,7 +359,7 @@ class SupervisorHandlers:
 
             await callback.message.edit_text(
                 f"✅ <b>Заявка одобрена!</b>\n\n"
-                f"📋 {app.external_id}\n"
+                f"📋 {format_application_number(app, for_client=True)}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
                 f"🎉 Все подписи собраны.\n"
                 f"{invoice_text}"
@@ -390,7 +391,7 @@ class SupervisorHandlers:
 
                 await callback.message.edit_text(
                     f"✅ <b>Эскалация одобрена!</b>\n\n"
-                    f"📋 {app.external_id}\n"
+                    f"📋 {format_application_number(app, for_client=True)}\n"
                     f"💰 {app.amount:,.0f}₽\n\n"
                     f"🏦 Заявка отправлена в банк на проверку рисков.",
                     reply_markup=self.kb.back_to_menu(),
@@ -432,7 +433,7 @@ class SupervisorHandlers:
 
                 await callback.message.edit_text(
                     f"✅ <b>Заявка одобрена!</b>\n\n"
-                    f"📋 {app.external_id}\n"
+                    f"📋 {format_application_number(app, for_client=True)}\n"
                     f"💰 {app.amount:,.0f}₽\n\n"
                     f"{invoice_text}"
                     f"📄 Счёт отправлен бухгалтеру.",
@@ -502,7 +503,7 @@ class SupervisorHandlers:
         await self._do_reject(app, reason, db_user)
 
         await message.answer(
-            f"❌ <b>Заявка {app.external_id} отклонена</b>\n\n"
+            f"❌ <b>{format_application_number(app, for_client=True)} отклонена</b>\n\n"
             f"📝 Причина: {reason}",
             reply_markup=self.kb.back_to_menu(),
             parse_mode="HTML"
@@ -530,7 +531,7 @@ class SupervisorHandlers:
 
         await callback.message.edit_text(
             f"↩️ <b>Заявка возвращена</b>\n\n"
-            f"📋 {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 {app.amount:,.0f}₽\n\n"
             f"Заявка возвращена менеджеру на доработку.",
             reply_markup=self.kb.back_to_menu(),
@@ -608,7 +609,7 @@ class SupervisorHandlers:
         await self._do_reject(app, reason, db_user)
 
         await callback.message.edit_text(
-            f"❌ <b>Заявка {app.external_id} отклонена</b>\n\n"
+            f"❌ <b>{format_application_number(app, for_client=True)} отклонена</b>\n\n"
             f"📝 Причина: {reason}",
             reply_markup=self.kb.back_to_menu(),
             parse_mode="HTML"
@@ -660,7 +661,7 @@ class SupervisorHandlers:
             'paid': '💰 Оплачено'
         }
 
-        text = f"📋 <b>Заявка {app.external_id}</b>\n\n"
+        text = f"📋 <b>{format_application_number(app, for_client=True)}</b>\n\n"
         text += f"📊 Статус: {status_map.get(app.status, app.status)}\n"
         text += f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
         text += f"🏢 ИНН: <code>{app.payer_inn}</code>\n"

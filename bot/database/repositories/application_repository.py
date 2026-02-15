@@ -133,14 +133,17 @@ class ApplicationRepository(BaseRepository[Application]):
             updated_at=datetime.utcnow()
         )
     
-    async def assign_bank(self, app_id: int, bank_id: int) -> bool:
+    async def assign_bank(self, app_id: int, bank_id: int, bank_display_number: Optional[int] = None) -> bool:
         """Назначить банк"""
-        return await self.update_by_id(
-            app_id,
-            bank_id=bank_id,
-            sent_to_bank_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
-        )
+        update_fields = {
+            'bank_id': bank_id,
+            'sent_to_bank_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow()
+        }
+        if bank_display_number is not None:
+            update_fields['bank_display_number'] = bank_display_number
+
+        return await self.update_by_id(app_id, **update_fields)
     
     async def assign_manager(self, app_id: int, manager_id: int) -> bool:
         """Назначить менеджера"""

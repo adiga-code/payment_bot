@@ -9,7 +9,7 @@ from aiogram.filters import ChatMemberUpdatedFilter, IS_NOT_MEMBER, MEMBER, ADMI
 
 from handlers import ClientHandlers, ManagerHandlers, AdminHandlers, BankHandlers, SupervisorHandlers, AccountantHandlers
 from database import DatabaseManager
-from database import ApplicationRepository, UserRepository, LogRepository, ApprovalRepository, BankRepository, CompanyRepository, DocumentRepository, SettingRepository
+from database import ApplicationRepository, UserRepository, LogRepository, ApprovalRepository, BankRepository, CompanyRepository, DocumentRepository, SettingRepository, CompanyBankRepository
 from services import LogicService, ZCBService, NotificationService
 from services.document import DocumentService
 from services.scheduler import SchedulerService
@@ -43,6 +43,7 @@ class PaymentBot:
         self.bank_repo = BankRepository(self.db_manager.async_session)
         self.document_repo = DocumentRepository(self.db_manager.async_session)
         self.setting_repo = SettingRepository(self.db_manager.async_session)
+        self.company_bank_repo = CompanyBankRepository(self.db_manager.async_session)
 
     async def _ensure_admins(self):
         """Автоматическое создание/обновление админов из ADMIN_IDS"""
@@ -118,6 +119,7 @@ class PaymentBot:
             approval_repo=self.approval_repo,
             company_repo=self.company_repo,
             bank_repo=self.bank_repo,
+            company_bank_repo=self.company_bank_repo,
             log_repo=self.log_repo,
             bot=self.Bot,
             notification_service=self.notification_service
@@ -223,6 +225,8 @@ class PaymentBot:
         self.scheduler = SchedulerService(
             company_repo=self.company_repo,
             bank_repo=self.bank_repo,
+            user_repo=self.user_repo,
+            company_bank_repo=self.company_bank_repo,
             application_repo=self.application_repo,
             notification_service=self.notification_service
         )

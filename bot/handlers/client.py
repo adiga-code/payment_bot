@@ -11,6 +11,7 @@ from services import LogicService
 from database import UserRepository, ApplicationRepository
 from services.notification import NotificationService
 from keyboards.client_kb import ClientKeyboard
+from utils import format_application_number
 
 
 class ApplicationForm(StatesGroup):
@@ -135,7 +136,7 @@ class ClientHandlers:
 
         await message.answer(
             f"✅ Ваша заявка создана!\n\n"
-            f"📋 Номер заявки: {app.external_id}\n"
+            f"📋 Номер заявки: {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {amount:,} руб.\n"
             f"🏢 ИНН: {inn}\n"
             f"📝 Назначение: {purpose}\n\n"
@@ -191,7 +192,7 @@ class ClientHandlers:
         await state.update_data(contract_app_id=app_id)
         await callback.message.answer(
             f"📝 <b>Заполнение данных договора</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n\n"
             f"Введите <b>номер договора</b>:",
             parse_mode="HTML"
@@ -255,7 +256,7 @@ class ClientHandlers:
 
         await message.answer(
             f"✅ <b>Данные договора сохранены!</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"📄 Договор: №{contract_number} от {contract_date}\n\n"
             f"🔍 Заявка отправлена на финальное согласование.",
             parse_mode="HTML"
@@ -298,7 +299,7 @@ class ClientHandlers:
 
         await message.answer(
             f"✅ <b>Данные договора сохранены!</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"📄 Договор: №{contract_number} от {contract_date}\n"
             f"📝 Назначение: {invoice_purpose}\n\n"
             f"🔍 Заявка отправлена на финальное согласование.",
@@ -337,7 +338,7 @@ class ClientHandlers:
 
         await callback.message.edit_text(
             f"✅ <b>Спасибо! Оплата отмечена.</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n\n"
             f"⏳ Ожидайте подтверждения поступления средств.",
             parse_mode="HTML"
@@ -409,7 +410,7 @@ class ClientHandlers:
 
         await message.answer(
             f"❌ <b>Заявка аннулирована</b>\n\n"
-            f"📋 Заявка: {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n"
             f"📝 Причина: {reason}\n\n"
             f"Для создания новой заявки используйте /zayavka",
@@ -455,7 +456,7 @@ class ClientHandlers:
         for app in active_apps:
             status = status_names.get(app.status, app.status)
             text += (
-                f"📋 {app.external_id}\n"
+                f"📋 {format_application_number(app, for_client=True)}\n"
                 f"💰 {app.amount:,.0f}₽\n"
                 f"📊 Статус: {status}\n\n"
             )
@@ -494,7 +495,7 @@ class ClientHandlers:
         for app in history_apps:
             status = status_names.get(app.status, app.status)
             text += (
-                f"📋 {app.external_id}\n"
+                f"📋 {format_application_number(app, for_client=True)}\n"
                 f"💰 {app.amount:,.0f}₽\n"
                 f"📊 Статус: {status}\n"
             )

@@ -41,6 +41,10 @@ class User(Base):
     # Настройки бухгалтера
     default_invoice_purpose: Mapped[str | None] = mapped_column(Text, nullable=True)  # Назначение платежа по умолчанию
 
+    # Счетчик заявок для клиента (сбрасывается каждый день)
+    daily_application_counter: Mapped[int] = mapped_column(Integer, default=0)
+    counter_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # Дата последнего сброса
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -185,6 +189,19 @@ class CompanyBank(Base):
     account_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_preferred: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Лимиты на счет
+    daily_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
+    weekly_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
+    monthly_limit: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
+
+    current_daily_used: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
+    current_weekly_used: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
+    current_monthly_used: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
+
+    # Счетчик заявок для компании в банке (сбрасывается каждый день)
+    daily_application_counter: Mapped[int] = mapped_column(Integer, default=0)
+    counter_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     # Связи
     company: Mapped["Company"] = relationship(
         'Company',
@@ -205,7 +222,11 @@ class Application(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     external_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
-    
+
+    # Номера для отображения
+    client_display_number: Mapped[int | None] = mapped_column(Integer, nullable=True)  # №1, №2... для клиента
+    bank_display_number: Mapped[int | None] = mapped_column(Integer, nullable=True)  # №1, №2... для компании в банке
+
     # Данные
     amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     payer_inn: Mapped[str] = mapped_column(String(12), nullable=False)

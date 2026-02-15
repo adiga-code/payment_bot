@@ -20,6 +20,7 @@ from database.models import Application
 from services.notification import NotificationService
 from keyboards.bank_kb import BankKeyboards
 from middleware import RoleRequiredMiddleware
+from utils import format_application_number
 
 
 REJECTION_REASONS = {
@@ -278,7 +279,7 @@ class BankHandlers:
         if risk_level == "high_risk":
             await callback.message.edit_text(
                 f"❌ <b>Отклонение заявки</b>\n\n"
-                f"📋 {app.external_id}\n"
+                f"📋 {format_application_number(app, for_client=False)}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
                 f"Выберите причину отклонения:",
                 reply_markup=self.kb.rejection_reasons(app_id),
@@ -293,7 +294,7 @@ class BankHandlers:
             await state.update_data(app_id=app_id, risk_level=risk_level, employee_id=db_user.id)
             await callback.message.edit_text(
                 f"⚠️ <b>Минимальный риск</b>\n\n"
-                f"📋 {app.external_id}\n"
+                f"📋 {format_application_number(app, for_client=False)}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
                 f"Опишите минимальный риск (комментарий будет отправлен супервайзеру):",
                 parse_mode="HTML"
@@ -322,7 +323,7 @@ class BankHandlers:
 
         await callback.message.edit_text(
             f"✅ <b>Без риска</b>\n\n"
-            f"📋 {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=False)}\n"
             f"💰 {app.amount:,.0f}₽\n\n"
             f"👤 Оценил: {employee_name}\n"
             f"📝 Клиенту отправлен запрос на данные договора.",
@@ -366,7 +367,7 @@ class BankHandlers:
 
         await callback.message.edit_text(
             f"❌ <b>Заявка отклонена</b>\n\n"
-            f"📋 {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=False)}\n"
             f"💰 {app.amount:,.0f}₽\n\n"
             f"👤 Отклонил: {employee_name}\n"
             f"📝 Причина: {reason}",
@@ -392,7 +393,7 @@ class BankHandlers:
 
         notification_text = (
             f"📥 <b>Заявка на оценку риска</b>\n\n"
-            f"📋 {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=False)}\n"
             f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n"
             f"🏢 ИНН плательщика: <code>{app.payer_inn}</code>\n"
         )
@@ -460,7 +461,7 @@ class BankHandlers:
         
         await message.answer(
             f"⚠️ <b>Минимальный риск</b>\n\n"
-            f"📋 {app.external_id}\n"
+            f"📋 {format_application_number(app, for_client=False)}\n"
             f"💰 {app.amount:,.0f}₽\n\n"
             f"📝 Комментарий: {comment}\n"
             f"👤 Оценил: {employee_name}\n\n"

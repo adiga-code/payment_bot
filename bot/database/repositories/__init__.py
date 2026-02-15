@@ -8,6 +8,7 @@ from .bank_repository import BankRepository
 from .document_repository import DocumentRepository
 from .log_repository import LogRepository
 from .setting_repository import SettingRepository
+from .company_bank_repository import CompanyBankRepository
 
 __all__ = [
     'ApplicationRepository',
@@ -18,4 +19,5 @@ __all__ = [
     'DocumentRepository',
     'LogRepository',
     'SettingRepository',
+    'CompanyBankRepository',
 ]

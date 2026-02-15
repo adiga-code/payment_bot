@@ -130,3 +130,47 @@ class DatabaseManager:
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
                 "default_invoice_purpose TEXT"
             ))
+
+            # Счетчики заявок для клиентов
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "daily_application_counter INTEGER DEFAULT 0"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "counter_date TIMESTAMP"
+            ))
+
+            # Лимиты и счетчики для счетов компаний в банках
+            await conn.execute(text(
+                "ALTER TABLE company_banks ADD COLUMN IF NOT EXISTS "
+                "daily_limit NUMERIC(15,2) DEFAULT 0"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE company_banks ADD COLUMN IF NOT EXISTS "
+                "weekly_limit NUMERIC(15,2) DEFAULT 0"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE company_banks ADD COLUMN IF NOT EXISTS "
+                "monthly_limit NUMERIC(15,2) DEFAULT 0"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE company_banks ADD COLUMN IF NOT EXISTS "
+                "current_daily_used NUMERIC(15,2) DEFAULT 0"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE company_banks ADD COLUMN IF NOT EXISTS "
+                "current_weekly_used NUMERIC(15,2) DEFAULT 0"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE company_banks ADD COLUMN IF NOT EXISTS "
+                "current_monthly_used NUMERIC(15,2) DEFAULT 0"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE company_banks ADD COLUMN IF NOT EXISTS "
+                "daily_application_counter INTEGER DEFAULT 0"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE company_banks ADD COLUMN IF NOT EXISTS "
+                "counter_date TIMESTAMP"
+            ))
