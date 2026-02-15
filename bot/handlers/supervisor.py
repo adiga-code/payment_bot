@@ -705,12 +705,12 @@ class SupervisorHandlers:
     async def cb_stats_detail(self, callback: CallbackQuery, db_user):
         """Показать детализацию статистики"""
         parts = callback.data.split(":")
-        detail_type = parts[2]  # by_company, by_bank, by_client, by_date
+        detail_type = parts[3]  # by_company, by_bank, by_client, by_date
 
         # Получаем даты из callback data или используем сегодня
         try:
-            start_date_str = parts[3] if len(parts) > 3 else date.today().isoformat()
-            end_date_str = parts[4] if len(parts) > 4 else date.today().isoformat()
+            start_date_str = parts[4] if len(parts) > 4 else date.today().isoformat()
+            end_date_str = parts[5] if len(parts) > 5 else date.today().isoformat()
             from datetime import datetime
             start_date = datetime.fromisoformat(start_date_str).date()
             end_date = datetime.fromisoformat(end_date_str).date()
