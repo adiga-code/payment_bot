@@ -81,11 +81,11 @@ class LogicService:
                 )
                 # Обновляем данные плательщика из ЗЧБ
                 update_fields = {}
-                # Приоритет: полное название > краткое название > общее название
-                if check_result.get('full_name'):
-                    update_fields['payer_name'] = check_result['full_name']
-                elif check_result.get('short_name'):
+                # Приоритет: краткое название > полное название > общее название
+                if check_result.get('short_name'):
                     update_fields['payer_name'] = check_result['short_name']
+                elif check_result.get('full_name'):
+                    update_fields['payer_name'] = check_result['full_name']
                 elif check_result.get('name'):
                     update_fields['payer_name'] = check_result['name']
 
