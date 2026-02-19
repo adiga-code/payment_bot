@@ -1664,9 +1664,9 @@ class AdminHandlers:
     async def cb_company_bank_limit_edit(self, callback: CallbackQuery, state: FSMContext, db_user):
         """Начать редактирование лимита счёта"""
         parts = callback.data.split(":")
-        limit_type = parts[3]
-        company_bank_id = int(parts[4])
-        company_id = int(parts[5])
+        limit_type = parts[4]
+        company_bank_id = int(parts[5])
+        company_id = int(parts[6])
 
         await state.set_state(AdminStates.editing_company_bank_limit)
         await state.update_data(
