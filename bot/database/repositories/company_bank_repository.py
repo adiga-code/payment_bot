@@ -3,6 +3,7 @@
 from typing import Optional, List
 from sqlalchemy import select
 from datetime import datetime, date
+from decimal import Decimal
 import pytz
 
 from database.base_repository import BaseRepository
@@ -166,40 +167,43 @@ class CompanyBankRepository(BaseRepository[CompanyBank]):
             if not cb:
                 raise ValueError(f"CompanyBank with id {company_bank_id} not found")
 
+            # Конвертируем amount в Decimal для совместимости с полями БД
+            amount_decimal = Decimal(str(amount))
+
             # Проверяем лимиты
-            daily_available = float(cb.daily_limit - cb.current_daily_used)
-            weekly_available = float(cb.weekly_limit - cb.current_weekly_used)
-            monthly_available = float(cb.monthly_limit - cb.current_monthly_used)
+            daily_available = cb.daily_limit - cb.current_daily_used
+            weekly_available = cb.weekly_limit - cb.current_weekly_used
+            monthly_available = cb.monthly_limit - cb.current_monthly_used
 
             # Проверяем, не превышен ли хотя бы один лимит
             limit_exceeded = False
             exceeded_limits = []
 
-            if cb.daily_limit > 0 and amount > daily_available:
+            if cb.daily_limit > 0 and amount_decimal > daily_available:
                 limit_exceeded = True
                 exceeded_limits.append('daily')
 
-            if cb.weekly_limit > 0 and amount > weekly_available:
+            if cb.weekly_limit > 0 and amount_decimal > weekly_available:
                 limit_exceeded = True
                 exceeded_limits.append('weekly')
 
-            if cb.monthly_limit > 0 and amount > monthly_available:
+            if cb.monthly_limit > 0 and amount_decimal > monthly_available:
                 limit_exceeded = True
                 exceeded_limits.append('monthly')
 
             # Обновляем использованные суммы если не превышен
             if not limit_exceeded:
-                cb.current_daily_used += amount
-                cb.current_weekly_used += amount
-                cb.current_monthly_used += amount
+                cb.current_daily_used += amount_decimal
+                cb.current_weekly_used += amount_decimal
+                cb.current_monthly_used += amount_decimal
                 await session.commit()
 
             return {
                 'allowed': not limit_exceeded,
                 'exceeded_limits': exceeded_limits,
-                'daily_available': daily_available,
-                'weekly_available': weekly_available,
-                'monthly_available': monthly_available,
+                'daily_available': float(daily_available),
+                'weekly_available': float(weekly_available),
+                'monthly_available': float(monthly_available),
                 'daily_limit': float(cb.daily_limit),
                 'weekly_limit': float(cb.weekly_limit),
                 'monthly_limit': float(cb.monthly_limit)
