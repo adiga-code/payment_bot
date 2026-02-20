@@ -386,8 +386,8 @@ class ManagerHandlers:
         )
         await callback.answer("Заявка отправлена в банк!")
 
-        # Отправляем уведомление в групповой чат банка
-        if bank and bank.chat_id:
+        # Формируем уведомление для банка
+        if bank:
             notification_text = (
                 f"📥 <b>Новая заявка на оценку риска</b>\n\n"
                 f"📋 {format_application_number(app, for_client=True)}\n"
@@ -405,15 +405,31 @@ class ManagerHandlers:
                 f"\n👔 Менеджер: {db_user.first_name or db_user.username}\n"
                 f"\n<b>Оцените уровень риска:</b>"
             )
-            try:
-                await self.bot.send_message(
-                    chat_id=bank.chat_id,
-                    text=notification_text,
-                    reply_markup=self.bank_kb.group_risk_assessment(app_id),
-                    parse_mode="HTML"
-                )
-            except Exception:
-                pass  # Банковский чат может быть недоступен
+
+            if bank.chat_id:
+                # Отправляем в групповой чат банка
+                try:
+                    await self.bot.send_message(
+                        chat_id=bank.chat_id,
+                        text=notification_text,
+                        reply_markup=self.bank_kb.group_risk_assessment(app_id),
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+            else:
+                # Fallback: отправляем всем пользователям банка напрямую
+                bank_users = await self.user_repo.get_by_bank_id(bank_id)
+                for bank_user in bank_users:
+                    try:
+                        await self.bot.send_message(
+                            chat_id=bank_user.telegram_id,
+                            text=notification_text,
+                            reply_markup=self.bank_kb.group_risk_assessment(app_id),
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
 
     async def cb_reject(self, callback: CallbackQuery, db_user):
         """Отклонение заявки - выбор причины"""
