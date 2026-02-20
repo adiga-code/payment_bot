@@ -170,7 +170,10 @@ class CompanyBankRepository(BaseRepository[CompanyBank]):
             # Конвертируем amount в Decimal для совместимости с полями БД
             amount_decimal = Decimal(str(amount))
 
-            # Проверяем лимиты
+            # Считываем все значения в локальные переменные пока сессия открыта
+            daily_limit_val = float(cb.daily_limit)
+            weekly_limit_val = float(cb.weekly_limit)
+            monthly_limit_val = float(cb.monthly_limit)
             daily_available = cb.daily_limit - cb.current_daily_used
             weekly_available = cb.weekly_limit - cb.current_weekly_used
             monthly_available = cb.monthly_limit - cb.current_monthly_used
@@ -204,7 +207,7 @@ class CompanyBankRepository(BaseRepository[CompanyBank]):
                 'daily_available': float(daily_available),
                 'weekly_available': float(weekly_available),
                 'monthly_available': float(monthly_available),
-                'daily_limit': float(cb.daily_limit),
-                'weekly_limit': float(cb.weekly_limit),
-                'monthly_limit': float(cb.monthly_limit)
+                'daily_limit': daily_limit_val,
+                'weekly_limit': weekly_limit_val,
+                'monthly_limit': monthly_limit_val
             }

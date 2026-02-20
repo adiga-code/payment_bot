@@ -786,6 +786,8 @@ class AdminHandlers:
 
                 # Показываем краткую сводку по факторам
                 facts = cbr_rating.get('facts', {})
+                if not isinstance(facts, dict):
+                    facts = {}
                 danger_count = len(facts.get('danger', []))
                 warning_count = len(facts.get('warning', []))
                 if danger_count > 0:
@@ -846,7 +848,7 @@ class AdminHandlers:
                     f"\n<b>Риск ЦБ РФ:</b>\n"
                     f"{emoji} {risk_name}\n"
                 )
-                if company.cbr_risk_facts:
+                if company.cbr_risk_facts and isinstance(company.cbr_risk_facts, dict):
                     danger_count = len(company.cbr_risk_facts.get('danger', []))
                     warning_count = len(company.cbr_risk_facts.get('warning', []))
                     if danger_count > 0:
@@ -981,8 +983,8 @@ class AdminHandlers:
                 current_monthly_used=0
             )
             await callback.answer("✅ Использование сброшено!", show_alert=True)
-            company = await self.company_repo.get_by_id(company_id)
-            # Обновляем сообщение
+            # Перенаправляем на просмотр компании (меняем data чтобы не было рекурсии)
+            callback.data = f"admin:company:{company_id}"
             await self.cb_company_action(callback, state, db_user)
 
         # Деактивация
