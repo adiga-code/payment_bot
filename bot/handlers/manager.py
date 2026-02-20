@@ -375,16 +375,21 @@ class ManagerHandlers:
 
         bank = await self.bank_repo.get_by_id(bank_id)
 
+        if bank and bank.chat_id:
+            status_text = "⏳ Ожидаем ответа от банка..."
+        else:
+            status_text = "⚠️ Банк не привязан к групповому чату. Уведомление не отправлено."
+
         await callback.message.edit_text(
             f"✅ <b>Заявка одобрена!</b>\n\n"
             f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 {app.amount:,.0f}₽\n"
             f"🏦 Отправлена в: {bank.name}\n\n"
-            f"⏳ Ожидаем ответа от банка...",
+            f"{status_text}",
             reply_markup=self.kb.main_menu(),
             parse_mode="HTML"
         )
-        await callback.answer("Заявка отправлена в банк!")
+        await callback.answer("Заявка одобрена!")
 
         # Отправляем уведомление в групповой чат банка
         if bank and bank.chat_id:
@@ -413,7 +418,7 @@ class ManagerHandlers:
                     parse_mode="HTML"
                 )
             except Exception:
-                pass  # Банковский чат может быть недоступен
+                pass
 
     async def cb_reject(self, callback: CallbackQuery, db_user):
         """Отклонение заявки - выбор причины"""

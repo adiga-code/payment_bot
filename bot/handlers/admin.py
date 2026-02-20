@@ -751,49 +751,64 @@ class AdminHandlers:
         ogrn = data.get('company_ogrn')
 
         # Создаём компанию
-        company = await self.company_repo.create(
-            name=data['company_name'],
-            inn=data['company_inn'],
-            ogrn=ogrn,
-            daily_limit=limit,
-            weekly_limit=limit * 5,
-            monthly_limit=limit * 20
-        )
+        try:
+            company = await self.company_repo.create(
+                name=data['company_name'],
+                inn=data['company_inn'],
+                ogrn=ogrn,
+                daily_limit=limit,
+                weekly_limit=limit * 5,
+                monthly_limit=limit * 20
+            )
+        except Exception as e:
+            logger.error(f"Error creating company: {e}")
+            await message.answer(
+                f"❌ Ошибка при создании компании: {str(e)}\n\n"
+                f"Возможно, компания с таким ОГРН уже существует.",
+                reply_markup=self.kb.back_to_menu()
+            )
+            return
 
         # Проверяем риск ЦБ РФ
         zcb_info = ""
         if ogrn and self.zcb_service:
             status_msg = await message.answer("🔍 Проверяю компанию (Риск ЦБ РФ)...")
-            cbr_rating = await self.zcb_service.get_cbr_rating(ogrn)
-            if cbr_rating:
-                # Конвертируем ISO строку обратно в datetime для БД
-                checked_at_str = cbr_rating.get('checked_at')
-                checked_at = datetime.fromisoformat(checked_at_str) if checked_at_str else None
+            try:
+                cbr_rating = await self.zcb_service.get_cbr_rating(ogrn)
+                if cbr_rating:
+                    # Конвертируем ISO строку обратно в datetime для БД
+                    checked_at_str = cbr_rating.get('checked_at')
+                    checked_at = datetime.fromisoformat(checked_at_str) if checked_at_str else None
 
-                await self.company_repo.update_by_id(
-                    company.id,
-                    cbr_risk_level=cbr_rating.get('level'),
-                    cbr_risk_facts=cbr_rating.get('facts'),
-                    cbr_checked_at=checked_at
-                )
-                from services.honest_business_api import get_cbr_risk_emoji, get_cbr_risk_name
-                emoji = get_cbr_risk_emoji(cbr_rating.get('level'))
-                risk_name = get_cbr_risk_name(cbr_rating.get('level'))
-                zcb_info = (
-                    f"\n\n<b>Риск ЦБ РФ:</b>\n"
-                    f"{emoji} {risk_name}"
-                )
+                    await self.company_repo.update_by_id(
+                        company.id,
+                        cbr_risk_level=cbr_rating.get('level'),
+                        cbr_risk_facts=cbr_rating.get('facts'),
+                        cbr_checked_at=checked_at
+                    )
+                    from services.honest_business_api import get_cbr_risk_emoji, get_cbr_risk_name
+                    emoji = get_cbr_risk_emoji(cbr_rating.get('level'))
+                    risk_name = get_cbr_risk_name(cbr_rating.get('level'))
+                    zcb_info = (
+                        f"\n\n<b>Риск ЦБ РФ:</b>\n"
+                        f"{emoji} {risk_name}"
+                    )
 
-                # Показываем краткую сводку по факторам
-                facts = cbr_rating.get('facts', {})
-                danger_count = len(facts.get('danger', []))
-                warning_count = len(facts.get('warning', []))
-                if danger_count > 0:
-                    zcb_info += f"\n🔴 Критических факторов: {danger_count}"
-                if warning_count > 0:
-                    zcb_info += f"\n🟡 Предупреждений: {warning_count}"
-            else:
-                zcb_info = "\n\n⚠️ Не удалось получить риск ЦБ РФ"
+                    # Показываем краткую сводку по факторам
+                    facts = cbr_rating.get('facts', {})
+                    if not isinstance(facts, dict):
+                        facts = {}
+                    danger_count = len(facts.get('danger', []))
+                    warning_count = len(facts.get('warning', []))
+                    if danger_count > 0:
+                        zcb_info += f"\n🔴 Критических факторов: {danger_count}"
+                    if warning_count > 0:
+                        zcb_info += f"\n🟡 Предупреждений: {warning_count}"
+                else:
+                    zcb_info = "\n\n⚠️ Не удалось получить риск ЦБ РФ"
+            except Exception as e:
+                logger.error(f"Error checking CBR rating for company {ogrn}: {e}")
+                zcb_info = "\n\n⚠️ Ошибка при проверке ЦБ РФ"
             try:
                 await status_msg.delete()
             except:
@@ -846,7 +861,7 @@ class AdminHandlers:
                     f"\n<b>Риск ЦБ РФ:</b>\n"
                     f"{emoji} {risk_name}\n"
                 )
-                if company.cbr_risk_facts:
+                if company.cbr_risk_facts and isinstance(company.cbr_risk_facts, dict):
                     danger_count = len(company.cbr_risk_facts.get('danger', []))
                     warning_count = len(company.cbr_risk_facts.get('warning', []))
                     if danger_count > 0:
@@ -981,8 +996,8 @@ class AdminHandlers:
                 current_monthly_used=0
             )
             await callback.answer("✅ Использование сброшено!", show_alert=True)
-            company = await self.company_repo.get_by_id(company_id)
-            # Обновляем сообщение
+            # Перенаправляем на просмотр компании (меняем data чтобы не было рекурсии)
+            callback.data = f"admin:company:{company_id}"
             await self.cb_company_action(callback, state, db_user)
 
         # Деактивация
