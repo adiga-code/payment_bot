@@ -99,11 +99,11 @@ class AccountantHandlers:
     async def cb_menu(self, callback: CallbackQuery, db_user):
         """Возврат в главное меню"""
         pending_count = len(await self._get_pending_invoices())
-        await callback.message.edit_text(
+        await self._safe_edit(
+            callback,
             f"📑 <b>Панель бухгалтера</b>\n\n"
             f"📄 Счетов на отправку: <b>{pending_count}</b>",
             reply_markup=self.kb.main_menu(),
-            parse_mode="HTML"
         )
         await callback.answer()
 
@@ -112,18 +112,18 @@ class AccountantHandlers:
         invoices = await self._get_pending_invoices()
 
         if not invoices:
-            await callback.message.edit_text(
+            await self._safe_edit(
+                callback,
                 "📄 Нет счетов, ожидающих отправки.",
                 reply_markup=self.kb.back_to_menu(),
-                parse_mode="HTML"
             )
             await callback.answer()
             return
 
-        await callback.message.edit_text(
+        await self._safe_edit(
+            callback,
             f"📄 <b>Счета на отправку ({len(invoices)})</b>",
             reply_markup=self.kb.invoices_list(invoices, list_type="pending"),
-            parse_mode="HTML"
         )
         await callback.answer()
 
@@ -132,18 +132,18 @@ class AccountantHandlers:
         invoices = await self._get_sent_invoices()
 
         if not invoices:
-            await callback.message.edit_text(
+            await self._safe_edit(
+                callback,
                 "📨 Нет отправленных счетов.",
                 reply_markup=self.kb.back_to_menu(),
-                parse_mode="HTML"
             )
             await callback.answer()
             return
 
-        await callback.message.edit_text(
+        await self._safe_edit(
+            callback,
             f"📨 <b>Отправленные счета ({len(invoices)})</b>",
             reply_markup=self.kb.invoices_list(invoices, list_type="sent"),
-            parse_mode="HTML"
         )
         await callback.answer()
 
@@ -160,10 +160,10 @@ class AccountantHandlers:
             invoices = await self._get_sent_invoices()
             title = "Отправленные счета"
 
-        await callback.message.edit_text(
+        await self._safe_edit(
+            callback,
             f"📄 <b>{title} ({len(invoices)})</b>",
             reply_markup=self.kb.invoices_list(invoices, list_type=list_type, page=page),
-            parse_mode="HTML"
         )
         await callback.answer()
 
@@ -214,10 +214,10 @@ class AccountantHandlers:
                 parse_mode="HTML"
             )
         else:
-            await callback.message.edit_text(
+            await self._safe_edit(
+                callback,
                 text + "\n\n⚠️ Файл счёта не найден на сервере.",
                 reply_markup=self.kb.invoice_actions(doc_id, is_sent=is_sent),
-                parse_mode="HTML"
             )
 
         await callback.answer()
@@ -277,19 +277,19 @@ class AccountantHandlers:
                 )
                 sent = True
             except Exception as e:
-                await callback.message.edit_text(
+                await self._safe_edit(
+                    callback,
                     f"❌ Ошибка отправки клиенту: {e}",
                     reply_markup=self.kb.back_to_menu(),
-                    parse_mode="HTML"
                 )
                 await callback.answer()
                 return
 
         if not sent:
-            await callback.message.edit_text(
+            await self._safe_edit(
+                callback,
                 "❌ Файл счёта не найден на сервере.",
                 reply_markup=self.kb.back_to_menu(),
-                parse_mode="HTML"
             )
             await callback.answer()
             return
@@ -319,13 +319,13 @@ class AccountantHandlers:
             details={'document_id': doc_id, 'invoice_number': doc.number}
         )
 
-        await callback.message.edit_text(
+        await self._safe_edit(
+            callback,
             f"✅ <b>Счёт {doc.number} отправлен клиенту!</b>\n\n"
             f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n\n"
             f"⏳ Ожидаем подтверждения оплаты от клиента.",
             reply_markup=self.kb.back_to_menu(),
-            parse_mode="HTML"
         )
         await callback.answer("Отправлено!")
 
@@ -404,16 +404,44 @@ class AccountantHandlers:
         pending = await self._get_pending_invoices()
         sent = await self._get_sent_invoices()
 
-        await callback.message.edit_text(
+        await self._safe_edit(
+            callback,
             f"📊 <b>Статистика</b>\n\n"
             f"📄 Ожидают отправки: <b>{len(pending)}</b>\n"
             f"📨 Отправлено: <b>{len(sent)}</b>",
             reply_markup=self.kb.back_to_menu(),
-            parse_mode="HTML"
         )
         await callback.answer()
 
     # ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
+
+    async def _safe_edit(
+        self,
+        callback: CallbackQuery,
+        text: str,
+        reply_markup=None,
+        parse_mode: str = "HTML",
+    ) -> None:
+        """
+        Редактирует текстовое сообщение или заменяет медиа-сообщение новым текстом.
+        edit_text() не работает на сообщениях с файлами (только caption), поэтому
+        в таком случае удаляем старое сообщение и отправляем новое.
+        """
+        if callback.message.text is not None:
+            await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        else:
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await self.bot.send_message(
+                chat_id=callback.message.chat.id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+            )
+
+
 
     async def _get_pending_invoices(self) -> list:
         """Получить счета, не отправленные клиенту"""
@@ -483,12 +511,12 @@ class AccountantHandlers:
             user_id=db_user.id
         )
 
-        await callback.message.edit_text(
+        await self._safe_edit(
+            callback,
             f"✅ <b>Получение средств подтверждено!</b>\n\n"
             f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n\n"
             f"📤 Менеджер уведомлён для выбора формата выдачи.",
-            parse_mode="HTML"
         )
         await callback.answer("Подтверждено!")
 
@@ -523,12 +551,12 @@ class AccountantHandlers:
             user_id=db_user.id
         )
 
-        await callback.message.edit_text(
+        await self._safe_edit(
+            callback,
             f"❌ <b>Средства не поступили</b>\n\n"
             f"📋 {format_application_number(app, for_client=True)}\n"
             f"💰 Сумма: {app.amount:,.0f}₽\n\n"
             f"⚠️ Заявка аннулирована. Клиент уведомлён.",
-            parse_mode="HTML"
         )
         await callback.answer()
 
@@ -541,13 +569,13 @@ class AccountantHandlers:
         # Получаем текущее назначение
         current_purpose = db_user.default_invoice_purpose or "не установлено"
         
-        await callback.message.edit_text(
+        await self._safe_edit(
+            callback,
             f"⚙️ <b>Настройка назначения платежа</b>\n\n"
             f"Текущее значение:\n"
             f"<i>{current_purpose}</i>\n\n"
             f"Введите новое назначение платежа, которое будет использоваться для всех счетов:\n"
             f"Например: <i>за строительные материалы</i>",
-            parse_mode="HTML"
         )
         await state.set_state(AccountantStates.waiting_for_purpose)
         await callback.answer()
