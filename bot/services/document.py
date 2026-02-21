@@ -1,12 +1,24 @@
 # bot/services/document.py
 
+import io
 import logging
 import os
+import re
+import shutil
+import subprocess
+import zipfile
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    logging.getLogger(__name__).warning(
+        "Pillow не установлен — изображения в счёте не будут масштабированы. "
+        "Установите: pip install Pillow"
+    )
 
 from database import DocumentRepository, ApplicationRepository, CompanyRepository, UserRepository
 from utils.amount_words import amount_to_words
@@ -14,36 +26,180 @@ from utils.amount_words import amount_to_words
 logger = logging.getLogger(__name__)
 
 DOCUMENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'documents')
-TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'bot', 'templates')
+TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates', 'template.docx')
 
+
+# ===========================================================================
+# Форматирование
+# ===========================================================================
 
 def _format_amount(amount) -> str:
-    """100000.00 -> 100 000,00"""
+    """100000.00 -> '100 000,00'"""
     amount = Decimal(str(amount))
     integer = int(amount)
     frac = int(round((amount - integer) * 100))
-    int_str = f"{integer:,}".replace(",", " ")
+    int_str = f"{integer:,}".replace(",", "\u00a0")  # неразрывный пробел
     return f"{int_str},{frac:02d}"
 
 
 def _format_date_ru(dt: datetime) -> str:
-    """datetime -> '23 января 2026 г.'"""
+    """datetime -> '21 февраля 2026'"""
     months = [
         '', 'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
         'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
     ]
-    return f"{dt.day} {months[dt.month]} {dt.year} г."
+    return f"{dt.day} {months[dt.month]} {dt.year}"
 
+
+def _xml_escape(text: str) -> str:
+    return (text
+            .replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+            .replace('"', '&quot;'))
+
+
+def _extract_name_inner(full_name: str) -> str:
+    """Извлекает краткое имя из кавычек: 'ООО "ТЕХСНАБ ГРУПП"' -> 'ТЕХСНАБ ГРУПП'"""
+    m = re.search(r'["\u00ab\u201c\u201e]([^"\u00bb\u201d\u201f]+)["\u00bb\u201d\u201f]', full_name)
+    if m:
+        return m.group(1)
+    parts = full_name.split(None, 1)
+    return parts[-1] if parts else full_name
+
+
+# ===========================================================================
+# Работа с изображениями
+# ===========================================================================
+
+def _get_image_slots(zip_path: str) -> dict:
+    """Возвращает словарь rId -> {'target': ..., 'cx': EMU, 'cy': EMU} из шаблона."""
+    with zipfile.ZipFile(zip_path, 'r') as z:
+        rels_xml = z.read('word/_rels/document.xml.rels').decode('utf-8')
+        doc_xml = z.read('word/document.xml').decode('utf-8')
+
+    rid_to_target = {}
+    for m in re.finditer(r'Id="(rId\d+)"[^>]*Type="[^"]*image[^"]*"[^>]*Target="([^"]+)"', rels_xml):
+        rid_to_target[m.group(1)] = m.group(2)
+
+    slots = {}
+    for anchor in re.finditer(r'<wp:anchor[^>]*>.*?</wp:anchor>', doc_xml, re.DOTALL):
+        a = anchor.group(0)
+        rid_m = re.search(r'r:embed="(rId\d+)"', a)
+        ext_m = re.search(r'<wp:extent cx="(\d+)" cy="(\d+)"', a)
+        if rid_m and ext_m:
+            rid = rid_m.group(1)
+            if rid not in slots and rid in rid_to_target:
+                slots[rid] = {
+                    'target': rid_to_target[rid],
+                    'cx': int(ext_m.group(1)),
+                    'cy': int(ext_m.group(2)),
+                }
+    return slots
+
+
+def _emu_to_px(emu: int, dpi: int = 150) -> int:
+    return max(1, round(emu / 914400 * dpi))
+
+
+def _fit_image(src: 'Image.Image', target_w: int, target_h: int, mode: str = 'fit') -> 'Image.Image':
+    src_w, src_h = src.size
+    if mode == 'stretch':
+        return src.resize((target_w, target_h), Image.LANCZOS)
+    scale = min(target_w / src_w, target_h / src_h)
+    new_w = max(1, round(src_w * scale))
+    new_h = max(1, round(src_h * scale))
+    resized = src.resize((new_w, new_h), Image.LANCZOS)
+    if mode == 'fill':
+        left = (new_w - target_w) // 2
+        top = (new_h - target_h) // 2
+        return resized.crop((left, top, left + target_w, top + target_h))
+    # fit — центрируем на прозрачном холсте
+    if resized.mode != 'RGBA':
+        resized = resized.convert('RGBA')
+    canvas = Image.new('RGBA', (target_w, target_h), (255, 255, 255, 0))
+    canvas.paste(resized, ((target_w - new_w) // 2, (target_h - new_h) // 2), resized)
+    return canvas
+
+
+def prepare_image_for_slot(image_path: str, cx_emu: int, cy_emu: int,
+                            dpi: int = 150, scale_mode: str = 'fit') -> bytes:
+    """Масштабирует изображение под размер слота и возвращает PNG-байты."""
+    if not PIL_AVAILABLE:
+        with open(image_path, 'rb') as f:
+            return f.read()
+    target_w = _emu_to_px(cx_emu, dpi)
+    target_h = _emu_to_px(cy_emu, dpi)
+    img = Image.open(image_path)
+    if img.mode not in ('RGBA', 'RGB', 'L'):
+        img = img.convert('RGBA')
+    fitted = _fit_image(img, target_w, target_h, mode=scale_mode)
+    buf = io.BytesIO()
+    fitted.save(buf, format='PNG', optimize=True)
+    return buf.getvalue()
+
+
+# ===========================================================================
+# Работа с ZIP-архивом docx
+# ===========================================================================
+
+def _update_zip_files(zip_path: str, updates: dict) -> None:
+    """Обновляет несколько файлов внутри ZIP за один проход."""
+    tmp_path = zip_path + '.tmp'
+    with zipfile.ZipFile(zip_path, 'r') as zin, \
+         zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            zout.writestr(item, updates.get(item.filename) or zin.read(item.filename))
+    os.replace(tmp_path, zip_path)
+
+
+# ===========================================================================
+# Конвертация docx → PDF через LibreOffice
+# ===========================================================================
+
+def _convert_docx_to_pdf(docx_path: str, output_dir: str) -> str | None:
+    """Конвертирует docx в PDF через LibreOffice headless."""
+    try:
+        result = subprocess.run(
+            ['libreoffice', '--headless', '--convert-to', 'pdf',
+             '--outdir', output_dir, docx_path],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        logger.error("LibreOffice не найден. Установите libreoffice-writer.")
+        return None
+    except subprocess.TimeoutExpired:
+        logger.error("LibreOffice: превышен таймаут конвертации (60 с)")
+        return None
+
+    if result.returncode != 0:
+        logger.error(f"LibreOffice конвертация завершилась с ошибкой: {result.stderr}")
+        return None
+
+    pdf_name = os.path.splitext(os.path.basename(docx_path))[0] + '.pdf'
+    pdf_path = os.path.join(output_dir, pdf_name)
+    if not os.path.exists(pdf_path):
+        logger.error(f"LibreOffice не создал файл: {pdf_path}")
+        return None
+
+    return pdf_path
+
+
+# ===========================================================================
+# Сервис генерации документов
+# ===========================================================================
 
 class DocumentService:
-    """Сервис генерации документов (счетов на оплату в PDF)"""
+    """Сервис генерации счетов на оплату (docx-шаблон → PDF через LibreOffice)."""
 
     def __init__(
         self,
         document_repo: DocumentRepository,
         application_repo: ApplicationRepository,
         company_repo: CompanyRepository = None,
-        user_repo: UserRepository = None
+        user_repo: UserRepository = None,
     ):
         self.document_repo = document_repo
         self.application_repo = application_repo
@@ -51,29 +207,22 @@ class DocumentService:
         self.user_repo = user_repo
         os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
-        # Jinja2 окружение
-        templates_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates')
-        self.jinja_env = Environment(
-            loader=FileSystemLoader(templates_path),
-            autoescape=True
-        )
-
     async def generate_invoice(self, app_id: int) -> str | None:
         """
         Генерирует счёт на оплату (PDF) для одобренной заявки.
 
         Returns:
-            file_path — путь к сгенерированному файлу, или None при ошибке
+            file_path — путь к сгенерированному PDF, или None при ошибке.
         """
         app = await self.application_repo.get_with_relations(app_id)
         if not app:
             logger.error(f"Application {app_id} not found for invoice generation")
             return None
 
-        # Деактивируем старые счета этой заявки
+        # Деактивируем старые счета
         await self.document_repo.deactivate_old(app_id, 'invoice')
 
-        # Создаём запись документа в БД (чтобы получить ID для номера)
+        # Создаём запись в БД — получаем ID для номера счёта
         doc_record = await self.document_repo.create(
             application_id=app_id,
             type='invoice',
@@ -82,11 +231,10 @@ class DocumentService:
         invoice_number = str(doc_record.id)
         now = datetime.utcnow()
 
-        # Данные компании-поставщика
+        # Данные поставщика
         co = app.company
         bank = app.bank
 
-        # Получаем номер счёта компании в этом банке
         account_number = ""
         if co and bank and self.company_repo:
             company_bank = await self.company_repo.get_company_bank_for_invoice(co.id, bank.id)
@@ -94,167 +242,155 @@ class DocumentService:
                 account_number = company_bank.account_number or ""
 
         supplier = {
-            'name': co.name if co else "—",
-            'inn': co.inn if co else "—",
-            'kpp': co.kpp if co and co.kpp else "",
-            'legal_address': co.legal_address if co and co.legal_address else "",
-            'bank_name': bank.name if bank else "",
-            'bank_bik': bank.bik if bank and bank.bik else "",
-            'bank_account': account_number,
+            'name':              co.name if co else "—",
+            'inn':               co.inn if co else "—",
+            'kpp':               co.kpp if co and co.kpp else "",
+            'legal_address':     co.legal_address if co and co.legal_address else "",
+            'bank_name':         bank.name if bank else "",
+            'bank_bik':          bank.bik if bank and bank.bik else "",
+            'bank_account':      account_number,
             'bank_corr_account': bank.corr_account if bank and bank.corr_account else "",
-            'director_name': co.director_name if co and co.director_name else "",
-            'accountant_name': co.accountant_name if co and co.accountant_name else "",
+            'director_name':     co.director_name if co and co.director_name else "",
+            'accountant_name':   co.accountant_name if co and co.accountant_name else "",
         }
 
         # Данные покупателя
         customer = {
-            'name': app.payer_name or "—",
-            'inn': app.payer_inn or "—",
-            'kpp': app.payer_kpp or "",
+            'name':    app.payer_name or "—",
+            'inn':     app.payer_inn or "—",
+            'kpp':     app.payer_kpp or "",
             'address': app.payer_address or "",
         }
 
         # Данные договора
         contract = {
             'number': app.contract_number or "",
-            'date': app.contract_date or "",
+            'date':   app.contract_date or "",
         }
 
-        # Получаем назначение платежа от бухгалтера
+        # Назначение платежа (сначала от бухгалтера, потом из заявки)
         invoice_purpose = ""
         if self.user_repo:
-            # Ищем любого бухгалтера с установленным назначением
             accountants = await self.user_repo.get_by_role('accountant')
             for acc in accountants:
                 if acc.default_invoice_purpose:
                     invoice_purpose = acc.default_invoice_purpose
                     break
-
-        # Если не нашли - используем старое значение из заявки (для совместимости)
         if not invoice_purpose:
             invoice_purpose = app.invoice_purpose or app.purpose or ""
 
         amount = Decimal(str(app.amount))
-
-        # НДС 22%
         nds = amount * Decimal('22') / Decimal('122')
 
+        invoice_date_short = now.strftime('%d.%m.%Y')
+
         # Описание строки товара
-        line_desc = f"Оплата по счету №{invoice_number} от {now.strftime('%d.%m.%Y')}"
+        line_desc = f"Оплата по счету №{invoice_number} от {invoice_date_short}"
         if contract['number']:
             line_desc += f" к договору №{contract['number']}"
             if contract['date']:
-                line_desc += f" от {contract['date']}"
+                line_desc += f" от {contract['date']} г"
         if invoice_purpose:
             line_desc += f" за {invoice_purpose}"
+        line_desc += "."
 
-        # Позиции
-        items = [{
-            'name': line_desc,
-            'quantity': '1,00',
-            'unit': 'шт',
-            'price': _format_amount(amount),
-            'total': _format_amount(amount),
-        }]
-
-        # Дата оплаты — +3 дня
         pay_by = now + timedelta(days=3)
 
-        # Путь к подписи компании (конвертируем в абсолютный)
-        signature_path = None
-        if co and co.signature_image_path:
-            # Если путь относительный - делаем абсолютным
-            sig_path = co.signature_image_path
-            logger.info(f"[SIGNATURE DEBUG] Original path from DB: {sig_path}")
+        # Путь к подписи
+        signature_path = self._resolve_image_path(
+            co.signature_image_path if co else None, 'SIGNATURE'
+        )
+        # Путь к печати
+        stamp_path = self._resolve_image_path(
+            co.stamp_image_path if co else None, 'STAMP'
+        )
 
-            if not os.path.isabs(sig_path):
-                # Относительный путь от корня проекта
-                project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-                logger.info(f"[SIGNATURE DEBUG] Project root: {project_root}")
-                sig_path = os.path.join(project_root, sig_path)
-                logger.info(f"[SIGNATURE DEBUG] Joined path: {sig_path}")
-
-            # Проверяем что файл существует
-            if os.path.exists(sig_path):
-                signature_path = os.path.abspath(sig_path)
-                logger.info(f"[SIGNATURE DEBUG] ✅ File exists! Absolute path: {signature_path}")
-            else:
-                logger.error(f"[SIGNATURE DEBUG] ❌ File NOT found at: {sig_path}")
-                # Попробуем найти файл в других местах для отладки
-                alt_paths = [
-                    os.path.join('/app', sig_path),
-                    os.path.join('/app/documents/signatures', os.path.basename(sig_path)),
-                    sig_path
-                ]
-                for alt_path in alt_paths:
-                    if os.path.exists(alt_path):
-                        logger.info(f"[SIGNATURE DEBUG] Found file at alternative path: {alt_path}")
-                        signature_path = os.path.abspath(alt_path)
-                        break
-        elif co:
-            logger.warning(f"Company {co.id} ({co.name}) has no signature - invoice will be generated without signature")
-
-        # Путь к печати компании (конвертируем в абсолютный)
-        stamp_path = None
-        if co and co.stamp_image_path:
-            # Если путь относительный - делаем абсолютным
-            st_path = co.stamp_image_path
-            logger.info(f"[STAMP DEBUG] Original path from DB: {st_path}")
-
-            if not os.path.isabs(st_path):
-                # Относительный путь от корня проекта
-                project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-                logger.info(f"[STAMP DEBUG] Project root: {project_root}")
-                st_path = os.path.join(project_root, st_path)
-                logger.info(f"[STAMP DEBUG] Joined path: {st_path}")
-
-            # Проверяем что файл существует
-            if os.path.exists(st_path):
-                stamp_path = os.path.abspath(st_path)
-                logger.info(f"[STAMP DEBUG] ✅ File exists! Absolute path: {stamp_path}")
-            else:
-                logger.error(f"[STAMP DEBUG] ❌ File NOT found at: {st_path}")
-                # Попробуем найти файл в других местах для отладки
-                alt_paths = [
-                    os.path.join('/app', st_path),
-                    os.path.join('/app/documents/stamps', os.path.basename(st_path)),
-                    st_path
-                ]
-                for alt_path in alt_paths:
-                    if os.path.exists(alt_path):
-                        logger.info(f"[STAMP DEBUG] Found file at alternative path: {alt_path}")
-                        stamp_path = os.path.abspath(alt_path)
-                        break
-        elif co:
-            logger.warning(f"Company {co.id} ({co.name}) has no stamp - invoice will be generated without stamp")
-
-        # Контекст для шаблона
-        context = {
-            'invoice_number': invoice_number,
-            'invoice_date': _format_date_ru(now),
-            'supplier': supplier,
-            'customer': customer,
-            'contract': contract,
-            'items': items,
-            'items_count': len(items),
-            'total': _format_amount(amount),
-            'vat': _format_amount(nds),
-            'total_words': amount_to_words(amount),
-            'payment_deadline': pay_by.strftime('%d.%m.%Y'),
-            'signature_path': signature_path,
-            'stamp_path': stamp_path,
+        # Плейсхолдеры шаблона
+        replacements = {
+            '{{supplier.bank_name}}':         supplier['bank_name'],
+            '{{supplier.bank_bik}}':          supplier['bank_bik'],
+            '{{supplier.bank_corr_account}}': supplier['bank_corr_account'],
+            '{{supplier.inn}}':               supplier['inn'],
+            '{{supplier.kpp}}':               supplier['kpp'],
+            '{{supplier.bank_account}}':      supplier['bank_account'],
+            '{{supplier.name_inner}}':        _extract_name_inner(supplier['name']),
+            '{{supplier.full_info}}':         (
+                f"{supplier['name']}, ИНН {supplier['inn']}, "
+                f"КПП {supplier['kpp']}, {supplier['legal_address']}"
+            ),
+            '{{supplier.director_name}}':     supplier['director_name'],
+            '{{supplier.accountant_name}}':   supplier['accountant_name'],
+            '{{customer.full_info}}':         (
+                f"{customer['name']}, ИНН {customer['inn']}, "
+                f"КПП {customer['kpp']}, {customer['address']}"
+            ),
+            '{{contract.number}}':            contract['number'],
+            '{{contract.date}}':              contract['date'],
+            '{{invoice_number}}':             invoice_number,
+            '{{invoice_date}}':               _format_date_ru(now),
+            '{{invoice_date_short}}':         invoice_date_short,
+            '{{item_description}}':           line_desc,
+            '{{total}}':                      _format_amount(amount),
+            '{{vat}}':                        _format_amount(nds),
+            '{{total_words}}':                amount_to_words(float(amount)),
+            '{{items_count}}':                '1',
+            '{{payment_deadline}}':           pay_by.strftime('%d.%m.%Y'),
         }
 
-        # Генерируем PDF
-        file_name = f"СЧ-{invoice_number}.pdf"
-        file_path = os.path.join(DOCUMENTS_DIR, file_name)
+        # Генерируем docx из шаблона
+        docx_name = f"СЧ-{invoice_number}.docx"
+        docx_path = os.path.join(DOCUMENTS_DIR, docx_name)
+
+        if not os.path.exists(TEMPLATE_PATH):
+            logger.error(f"Шаблон счёта не найден: {TEMPLATE_PATH}")
+            return None
 
         try:
-            template = self.jinja_env.get_template('invoice_template.html')
-            html_content = template.render(**context)
-            HTML(string=html_content).write_pdf(file_path)
+            shutil.copy2(TEMPLATE_PATH, docx_path)
+
+            with zipfile.ZipFile(docx_path, 'r') as z:
+                doc_xml = z.read('word/document.xml').decode('utf-8')
+
+            for placeholder, value in replacements.items():
+                doc_xml = doc_xml.replace(placeholder, _xml_escape(str(value)))
+
+            remaining = re.findall(r'\{\{[^}]+\}\}', doc_xml)
+            if remaining:
+                logger.warning(f"Незаполненные плейсхолдеры в счёте: {set(remaining)}")
+
+            zip_updates = {'word/document.xml': doc_xml.encode('utf-8')}
+
+            # Вставляем изображения (печать rId5, подпись rId6)
+            if signature_path or stamp_path:
+                slots = _get_image_slots(TEMPLATE_PATH)
+                image_map = {'rId5': stamp_path, 'rId6': signature_path}
+                for rid, img_path in image_map.items():
+                    if not img_path or not os.path.exists(img_path):
+                        continue
+                    slot = slots.get(rid)
+                    if not slot:
+                        logger.warning(f"Слот {rid} не найден в шаблоне")
+                        continue
+                    img_bytes = prepare_image_for_slot(img_path, slot['cx'], slot['cy'])
+                    zip_updates[f'word/{slot["target"]}'] = img_bytes
+                    logger.info(f"{rid} → {slot['target']} вставлен")
+
+            _update_zip_files(docx_path, zip_updates)
+
         except Exception as e:
-            logger.error(f"Failed to generate invoice PDF for app {app_id}: {e}")
+            logger.error(f"Ошибка генерации docx для заявки {app_id}: {e}")
+            if os.path.exists(docx_path):
+                os.remove(docx_path)
+            return None
+
+        # Конвертируем docx → PDF
+        pdf_path = _convert_docx_to_pdf(docx_path, DOCUMENTS_DIR)
+
+        # Удаляем промежуточный docx
+        if os.path.exists(docx_path):
+            os.remove(docx_path)
+
+        if pdf_path is None:
             return None
 
         # Обновляем запись в БД
@@ -262,11 +398,35 @@ class DocumentService:
         await self.document_repo.update_by_id(
             doc_record.id,
             number=display_number,
-            file_path=file_path,
+            file_path=pdf_path,
         )
 
-        # Обновляем статус заявки
         await self.application_repo.mark_invoice_generated(app_id)
 
-        logger.info(f"Invoice {display_number} generated for application {app.external_id}")
-        return file_path
+        logger.info(f"Счёт {display_number} сгенерирован для заявки {app.external_id}")
+        return pdf_path
+
+    def _resolve_image_path(self, raw_path: str | None, label: str) -> str | None:
+        """Разрешает путь к изображению (относительный или абсолютный)."""
+        if not raw_path:
+            return None
+
+        path = raw_path
+        if not os.path.isabs(path):
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            path = os.path.join(project_root, path)
+
+        if os.path.exists(path):
+            return os.path.abspath(path)
+
+        # Запасные варианты
+        for alt in [
+            os.path.join('/app', raw_path),
+            os.path.join('/app/documents', os.path.basename(raw_path)),
+        ]:
+            if os.path.exists(alt):
+                logger.info(f"[{label}] Найден по альтернативному пути: {alt}")
+                return os.path.abspath(alt)
+
+        logger.error(f"[{label}] Файл не найден: {path}")
+        return None

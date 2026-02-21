@@ -9,8 +9,7 @@ SQLAlchemy==2.0.25
 alembic==1.13.1
 
 # Documents
-weasyprint>=60.0
-jinja2>=3.1.0
+Pillow>=10.0
 
 # Utils
 pydantic==2.5.3
