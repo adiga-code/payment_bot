@@ -108,7 +108,7 @@ def _fix_para_runs(para: str) -> str:
     while i < len(run_texts):
         text = run_texts[i]
         # Ран начинает плейсхолдер, но не завершает его
-        if '{{' in text and not re.search(r'\{\{[^}]+\}\}', text):
+        if ('{{' in text or text.endswith('{')) and not re.search(r'\{\{[^}]+\}\}', text):
             for j in range(i + 1, len(run_texts) + 1):
                 combined = ''.join(run_texts[i:j])
                 if '}}' in combined:
