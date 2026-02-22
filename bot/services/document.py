@@ -43,12 +43,12 @@ def _format_amount(amount) -> str:
 
 
 def _format_date_ru(dt: datetime) -> str:
-    """datetime -> '21 февраля 2026'"""
+    """datetime -> '21 февраля 2026 г.'"""
     months = [
         '', 'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
         'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
     ]
-    return f"{dt.day} {months[dt.month]} {dt.year}"
+    return f"{dt.day} {months[dt.month]} {dt.year} г."
 
 
 def _xml_escape(text: str) -> str:
@@ -66,6 +66,75 @@ def _extract_name_inner(full_name: str) -> str:
         return m.group(1)
     parts = full_name.split(None, 1)
     return parts[-1] if parts else full_name
+
+
+# ===========================================================================
+# Исправление разбитых плейсхолдеров (артефакт Word)
+# ===========================================================================
+
+_RUN_RE = re.compile(r'<w:r\b[^>]*>.*?</w:r>', re.DOTALL)
+_T_TEXT_RE = re.compile(r'<w:t(?:\s[^>]*)?>([^<]*)</w:t>')
+
+
+def _fix_split_placeholders(doc_xml: str) -> str:
+    """
+    Word разбивает плейсхолдеры {{...}} на несколько <w:r> из-за маркеров
+    проверки орфографии/грамматики (<w:proofErr/>). Функция:
+    1. Удаляет элементы <w:proofErr/> — они ничего не рендерят.
+    2. В каждом абзаце склеивает соседние раны, которые вместе образуют плейсхолдер.
+    """
+    doc_xml = re.sub(r'<w:proofErr\b[^/]*/>', '', doc_xml)
+    return re.sub(
+        r'<w:p[ >].*?</w:p>',
+        lambda m: _fix_para_runs(m.group(0)),
+        doc_xml,
+        flags=re.DOTALL,
+    )
+
+
+def _fix_para_runs(para: str) -> str:
+    """Склеивает раны параграфа, которые вместе образуют плейсхолдер {{...}}."""
+    runs = list(_RUN_RE.finditer(para))
+    if len(runs) < 2:
+        return para
+
+    run_texts = []
+    for r in runs:
+        tm = _T_TEXT_RE.search(r.group(0))
+        run_texts.append(tm.group(1) if tm else '')
+
+    merge_groups = []
+    i = 0
+    while i < len(run_texts):
+        text = run_texts[i]
+        # Ран начинает плейсхолдер, но не завершает его
+        if '{{' in text and not re.search(r'\{\{[^}]+\}\}', text):
+            for j in range(i + 1, len(run_texts) + 1):
+                combined = ''.join(run_texts[i:j])
+                if '}}' in combined:
+                    if j > i + 1:
+                        merge_groups.append((i, j - 1))
+                    i = j
+                    break
+            else:
+                i += 1
+        else:
+            i += 1
+
+    if not merge_groups:
+        return para
+
+    # Применяем в обратном порядке, чтобы не сбивать позиции
+    for start_idx, end_idx in reversed(merge_groups):
+        merged_text = ''.join(run_texts[start_idx:end_idx + 1])
+        first_run_xml = runs[start_idx].group(0)
+        rpr_m = re.search(r'<w:rPr>.*?</w:rPr>', first_run_xml, re.DOTALL)
+        rpr = rpr_m.group(0) if rpr_m else ''
+        space_attr = ' xml:space="preserve"' if ' ' in merged_text else ''
+        new_run = f'<w:r>{rpr}<w:t{space_attr}>{merged_text}</w:t></w:r>'
+        para = para[:runs[start_idx].start()] + new_run + para[runs[end_idx].end():]
+
+    return para
 
 
 # ===========================================================================
@@ -350,6 +419,8 @@ class DocumentService:
 
             with zipfile.ZipFile(docx_path, 'r') as z:
                 doc_xml = z.read('word/document.xml').decode('utf-8')
+
+            doc_xml = _fix_split_placeholders(doc_xml)
 
             for placeholder, value in replacements.items():
                 doc_xml = doc_xml.replace(placeholder, _xml_escape(str(value)))

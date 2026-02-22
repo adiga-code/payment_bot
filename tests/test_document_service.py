@@ -8,20 +8,23 @@ import pytest
 from decimal import Decimal
 from datetime import datetime
 
-from services.document import _format_amount, _format_date_ru
+from services.document import _format_amount, _format_date_ru, _fix_split_placeholders
 
 
 class TestFormatAmount:
     """Тесты форматирования сумм"""
 
+    # _format_amount использует неразрывный пробел \u00a0 как разделитель тысяч
+    NBSP = '\u00a0'
+
     def test_integer(self):
-        assert _format_amount(1000) == "1 000,00"
+        assert _format_amount(1000) == f"1{self.NBSP}000,00"
 
     def test_large_integer(self):
-        assert _format_amount(3002700) == "3 002 700,00"
+        assert _format_amount(3002700) == f"3{self.NBSP}002{self.NBSP}700,00"
 
     def test_with_decimals(self):
-        assert _format_amount(1234.56) == "1 234,56"
+        assert _format_amount(1234.56) == f"1{self.NBSP}234,56"
 
     def test_zero(self):
         assert _format_amount(0) == "0,00"
@@ -30,11 +33,11 @@ class TestFormatAmount:
         assert _format_amount(1) == "1,00"
 
     def test_decimal_type(self):
-        assert _format_amount(Decimal("999999.99")) == "999 999,99"
+        assert _format_amount(Decimal("999999.99")) == f"999{self.NBSP}999,99"
 
     def test_millions(self):
         result = _format_amount(15000000)
-        assert result == "15 000 000,00"
+        assert result == f"15{self.NBSP}000{self.NBSP}000,00"
 
     def test_kopecks_rounding(self):
         assert _format_amount(100.555) == "100,56"
@@ -58,6 +61,99 @@ class TestFormatDateRu:
     def test_march(self):
         dt = datetime(2026, 3, 8)
         assert _format_date_ru(dt) == "8 марта 2026 г."
+
+
+class TestFixSplitPlaceholders:
+    """Тесты исправления плейсхолдеров, разбитых Word на несколько XML-ранов"""
+
+    def _make_run(self, text: str, rpr: str = '') -> str:
+        return f'<w:r>{rpr}<w:t>{text}</w:t></w:r>'
+
+    def _wrap_para(self, *runs: str) -> str:
+        return '<w:p>' + ''.join(runs) + '</w:p>'
+
+    def test_single_run_unchanged(self):
+        """Плейсхолдер в одном ране не трогается."""
+        para = self._wrap_para(self._make_run('{{invoice_date}}'))
+        result = _fix_split_placeholders(para)
+        assert '{{invoice_date}}' in result
+
+    def test_split_across_two_runs(self):
+        """Плейсхолдер разбит на 2 рана — должен склеиться."""
+        para = self._wrap_para(
+            self._make_run('{{invoice_'),
+            self._make_run('date}}'),
+        )
+        result = _fix_split_placeholders(para)
+        assert '{{invoice_date}}' in result
+
+    def test_split_across_three_runs(self):
+        """Плейсхолдер разбит на 3 рана (типичный случай Word)."""
+        para = self._wrap_para(
+            self._make_run('{{'),
+            self._make_run('invoice_date'),
+            self._make_run('}}'),
+        )
+        result = _fix_split_placeholders(para)
+        assert '{{invoice_date}}' in result
+
+    def test_prooferr_removed(self):
+        """Элементы <w:proofErr/> удаляются."""
+        xml = (
+            '<w:p>'
+            '<w:r><w:t>{{</w:t></w:r>'
+            '<w:proofErr w:type="spellStart"/>'
+            '<w:r><w:t>invoice_date</w:t></w:r>'
+            '<w:proofErr w:type="spellEnd"/>'
+            '<w:r><w:t>}}</w:t></w:r>'
+            '</w:p>'
+        )
+        result = _fix_split_placeholders(xml)
+        assert 'proofErr' not in result
+        assert '{{invoice_date}}' in result
+
+    def test_multiple_split_placeholders_in_para(self):
+        """Несколько разбитых плейсхолдеров в одном параграфе.
+
+        В реальном Word-XML текст между плейсхолдерами всегда в отдельном ране;
+        каждый плейсхолдер разбит независимо.
+        """
+        para = self._wrap_para(
+            self._make_run('{{'),
+            self._make_run('supplier.bank_name'),
+            self._make_run('}}'),
+            self._make_run(' и '),        # обычный текст между плейсхолдерами
+            self._make_run('{{'),
+            self._make_run('supplier.bank_bik'),
+            self._make_run('}}'),
+        )
+        result = _fix_split_placeholders(para)
+        assert '{{supplier.bank_name}}' in result
+        assert '{{supplier.bank_bik}}' in result
+
+    def test_rpr_preserved_from_first_run(self):
+        """Форматирование (<w:rPr>) берётся из первого рана."""
+        rpr = '<w:rPr><w:b/></w:rPr>'
+        para = self._wrap_para(
+            self._make_run('{{', rpr=rpr),
+            self._make_run('invoice_date'),
+            self._make_run('}}'),
+        )
+        result = _fix_split_placeholders(para)
+        assert '<w:b/>' in result
+        assert '{{invoice_date}}' in result
+
+    def test_non_placeholder_runs_unchanged(self):
+        """Раны без плейсхолдеров не склеиваются."""
+        para = self._wrap_para(
+            self._make_run('Обычный текст'),
+            self._make_run(' продолжение'),
+        )
+        result = _fix_split_placeholders(para)
+        assert 'Обычный текст' in result
+        assert ' продолжение' in result
+        # Оба рана должны остаться раздельными (два <w:t>)
+        assert result.count('<w:t>') == 2
 
 
 class TestInvoiceTemplate:
