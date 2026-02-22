@@ -143,6 +143,28 @@ class TestFixSplitPlaceholders:
         assert '<w:b/>' in result
         assert '{{invoice_date}}' in result
 
+    def test_split_on_opening_braces(self):
+        """Плейсхолдер разбит прямо по {{ : один { в одном ране, {name}} в следующем."""
+        para = self._wrap_para(
+            self._make_run('ИНН {'),
+            self._make_run('{supplier.inn}}'),
+        )
+        result = _fix_split_placeholders(para)
+        assert '{{supplier.inn}}' in result
+
+    def test_split_on_opening_braces_with_prooferr(self):
+        """{{ разбит с proofErr между ранами."""
+        xml = (
+            '<w:p>'
+            '<w:r><w:t xml:space="preserve">ИНН {</w:t></w:r>'
+            '<w:proofErr w:type="gramEnd"/>'
+            '<w:r><w:t>{supplier.inn}}</w:t></w:r>'
+            '</w:p>'
+        )
+        result = _fix_split_placeholders(xml)
+        assert 'proofErr' not in result
+        assert '{{supplier.inn}}' in result
+
     def test_non_placeholder_runs_unchanged(self):
         """Раны без плейсхолдеров не склеиваются."""
         para = self._wrap_para(
