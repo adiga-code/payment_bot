@@ -161,6 +161,18 @@ class AccountantKeyboards:
         return builder.as_markup()
 
     @staticmethod
+    def fill_invoice_data(app_id: int) -> InlineKeyboardMarkup:
+        """Кнопка запуска FSM-заполнения недостающих данных для счёта"""
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(
+                text="✏️ Заполнить данные",
+                callback_data=f"acc:fill:{app_id}"
+            )
+        )
+        return builder.as_markup()
+
+    @staticmethod
     def back_to_menu() -> InlineKeyboardMarkup:
         """Кнопка возврата в меню"""
         builder = InlineKeyboardBuilder()

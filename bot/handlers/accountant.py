@@ -12,7 +12,9 @@ from database import (
     ApplicationRepository,
     UserRepository,
     DocumentRepository,
-    LogRepository
+    LogRepository,
+    BankRepository,
+    CompanyBankRepository,
 )
 from services.notification import NotificationService
 from services.document import DocumentService
@@ -23,7 +25,8 @@ from utils import format_application_number
 
 class AccountantStates(StatesGroup):
     """FSM состояния для бухгалтера"""
-    waiting_for_purpose = State()  # Ожидание ввода назначения платежа
+    waiting_for_purpose = State()       # Ожидание ввода назначения платежа
+    filling_invoice_field = State()     # Поочерёдный ввод недостающих данных для счёта
 
 
 class AccountantHandlers:
@@ -39,7 +42,9 @@ class AccountantHandlers:
             log_repo: LogRepository,
             bot: Bot,
             notification_service: NotificationService = None,
-            document_service: DocumentService = None
+            document_service: DocumentService = None,
+            bank_repo: BankRepository = None,
+            company_bank_repo: CompanyBankRepository = None,
     ):
         self.router = Router()
         self.user_repo = user_repo
@@ -49,6 +54,8 @@ class AccountantHandlers:
         self.bot = bot
         self.notification_service = notification_service
         self.document_service = document_service
+        self.bank_repo = bank_repo
+        self.company_bank_repo = company_bank_repo
         self.kb = AccountantKeyboards()
 
         self._setup_middleware()
@@ -74,9 +81,11 @@ class AccountantHandlers:
         self.router.callback_query(F.data.startswith("acc:send:"))(self.cb_send_to_client)
         self.router.callback_query(F.data.startswith("acc:confirm_send:"))(self.cb_confirm_send)
         self.router.callback_query(F.data.startswith("acc:regen:"))(self.cb_regenerate)
+        self.router.callback_query(F.data.startswith("acc:fill:"))(self.cb_fill_invoice_data)
 
         # FSM обработчики
         self.router.message(AccountantStates.waiting_for_purpose)(self.process_purpose)
+        self.router.message(AccountantStates.filling_invoice_field)(self.process_invoice_field)
 
         # Подтверждение получения средств
         self.router.callback_query(F.data.startswith("acc:confirm_payment:"))(self.cb_confirm_payment)
@@ -348,6 +357,19 @@ class AccountantHandlers:
 
         app_id = doc.application_id
 
+        # Проверяем обязательные поля перед генерацией
+        missing = await self.document_service.validate_invoice_data(app_id)
+        if missing:
+            fields_text = "\n".join(f"  • {f['label']}" for f in missing)
+            await self._safe_edit(
+                callback,
+                f"⚠️ <b>Не хватает данных для счёта</b>\n\n"
+                f"❌ Не заполнены обязательные поля:\n{fields_text}",
+                reply_markup=self.kb.fill_invoice_data(app_id),
+            )
+            await callback.answer()
+            return
+
         # Генерируем новый счёт (старый деактивируется внутри generate_invoice)
         file_path = await self.document_service.generate_invoice(app_id)
 
@@ -583,15 +605,15 @@ class AccountantHandlers:
     async def process_purpose(self, message: Message, state: FSMContext, db_user):
         """Обработка введенного назначения платежа"""
         purpose = message.text.strip()
-        
+
         if not purpose:
             await message.answer("❗ Введите назначение платежа")
             return
-        
+
         # Сохраняем назначение
         await self.user_repo.update_by_id(db_user.id, default_invoice_purpose=purpose)
         await state.clear()
-        
+
         await message.answer(
             f"✅ <b>Назначение платежа сохранено!</b>\n\n"
             f"Новое значение:\n"
@@ -599,3 +621,153 @@ class AccountantHandlers:
             f"Это назначение будет использоваться для всех новых счетов.",
             parse_mode="HTML"
         )
+
+    # ==================== FSM: ЗАПОЛНЕНИЕ ДАННЫХ ДЛЯ СЧЁТА ====================
+
+    async def cb_fill_invoice_data(self, callback: CallbackQuery, state: FSMContext, db_user):
+        """Начало FSM-диалога заполнения недостающих полей для счёта"""
+        app_id = int(callback.data.split(":")[-1])
+
+        if not self.document_service:
+            await callback.answer("Сервис документов недоступен", show_alert=True)
+            return
+
+        missing = await self.document_service.validate_invoice_data(app_id)
+
+        if not missing:
+            # Все поля заполнены — генерируем сразу
+            await self._safe_edit(callback, "⏳ Генерирую счёт...")
+            file_path = await self.document_service.generate_invoice(app_id)
+            if not file_path:
+                await self._safe_edit(
+                    callback,
+                    "❌ Ошибка генерации счёта.",
+                    reply_markup=self.kb.back_to_menu(),
+                )
+                await callback.answer()
+                return
+            new_doc = await self.document_repo.get_latest_invoice(app_id)
+            app = await self.application_repo.get_with_relations(app_id)
+            text = (
+                f"🧾 <b>Счёт сгенерирован: {new_doc.number}</b>\n\n"
+                f"📋 {format_application_number(app, for_client=True)}\n"
+                f"💰 Сумма: <b>{app.amount:,.0f}₽</b>"
+            )
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            file = FSInputFile(file_path)
+            await self.bot.send_document(
+                chat_id=callback.message.chat.id,
+                document=file,
+                caption=text,
+                reply_markup=self.kb.invoice_actions(new_doc.id, is_sent=False),
+                parse_mode="HTML",
+            )
+            await callback.answer("Счёт сгенерирован!")
+            return
+
+        # Сохраняем список недостающих полей в FSM и запрашиваем первое
+        await state.set_state(AccountantStates.filling_invoice_field)
+        await state.update_data(app_id=app_id, fields=missing, current=0)
+
+        field = missing[0]
+        await self._safe_edit(
+            callback,
+            f"✏️ <b>Заполнение данных для счёта</b> (1/{len(missing)})\n\n"
+            f"Введите <b>{field['label']}</b>:",
+        )
+        await callback.answer()
+
+    async def process_invoice_field(self, message: Message, state: FSMContext, db_user):
+        """Обработка введённого значения поля и переход к следующему"""
+        data = await state.get_data()
+        fields = data['fields']
+        current = data['current']
+        app_id = data['app_id']
+        field = fields[current]
+
+        value = message.text.strip()
+        if not value:
+            await message.answer("❗ Значение не может быть пустым. Введите ещё раз:")
+            return
+
+        saved = await self._save_invoice_field(field, value)
+        if not saved:
+            await message.answer("❌ Ошибка сохранения. Попробуйте ещё раз:")
+            return
+
+        next_idx = current + 1
+        if next_idx < len(fields):
+            await state.update_data(current=next_idx)
+            next_field = fields[next_idx]
+            await message.answer(
+                f"✅ Сохранено!\n\n"
+                f"✏️ <b>Поле {next_idx + 1}/{len(fields)}</b>\n\n"
+                f"Введите <b>{next_field['label']}</b>:",
+                parse_mode="HTML",
+            )
+        else:
+            # Все поля заполнены — генерируем счёт
+            await state.clear()
+            await message.answer("✅ Все данные заполнены! Генерирую счёт...", parse_mode="HTML")
+            file_path = await self.document_service.generate_invoice(app_id)
+            if not file_path:
+                await message.answer(
+                    "❌ Ошибка генерации счёта. Попробуйте «Переформировать» из меню."
+                )
+                return
+            new_doc = await self.document_repo.get_latest_invoice(app_id)
+            app = await self.application_repo.get_with_relations(app_id)
+            text = (
+                f"🧾 <b>Счёт сгенерирован: {new_doc.number}</b>\n\n"
+                f"📋 {format_application_number(app, for_client=True)}\n"
+                f"💰 Сумма: <b>{app.amount:,.0f}₽</b>"
+            )
+            file = FSInputFile(file_path)
+            await self.bot.send_document(
+                chat_id=message.chat.id,
+                document=file,
+                caption=text,
+                reply_markup=self.kb.invoice_actions(new_doc.id, is_sent=False),
+                parse_mode="HTML",
+            )
+
+    async def _save_invoice_field(self, field: dict, value: str) -> bool:
+        """Сохраняет значение поля в нужную модель БД"""
+        import logging as _logging
+        logger = _logging.getLogger(__name__)
+
+        model = field['model']
+        model_id = field['model_id']
+        attr = field['attr']
+
+        try:
+            if model == 'bank' and self.bank_repo:
+                await self.bank_repo.update_by_id(model_id, **{attr: value})
+                return True
+
+            elif model == 'company':
+                company_repo = getattr(self.document_service, 'company_repo', None)
+                if company_repo:
+                    await company_repo.update_by_id(model_id, **{attr: value})
+                    return True
+
+            elif model == 'company_bank':
+                if model_id and self.company_bank_repo:
+                    await self.company_bank_repo.update_by_id(model_id, **{attr: value})
+                    return True
+                elif not model_id:
+                    # Запись CompanyBank ещё не существует — создаём
+                    company_id = field.get('company_id')
+                    bank_id = field.get('bank_id')
+                    company_repo = getattr(self.document_service, 'company_repo', None)
+                    if company_repo and company_id and bank_id:
+                        await company_repo.create_company_bank(company_id, bank_id, value, False)
+                        return True
+
+        except Exception as e:
+            logger.error(f"Error saving invoice field {field}: {e}")
+
+        return False

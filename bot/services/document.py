@@ -406,6 +406,64 @@ class DocumentService:
         logger.info(f"Счёт {display_number} сгенерирован для заявки {app.external_id}")
         return pdf_path
 
+    async def validate_invoice_data(self, app_id: int) -> list[dict]:
+        """
+        Проверяет обязательные поля для генерации счёта.
+
+        Возвращает пустой список если всё OK, иначе список недостающих полей вида:
+          [{'key': 'bank.bik', 'label': 'БИК банка',
+            'model': 'bank', 'model_id': 5, 'attr': 'bik'}, ...]
+
+        Дополнительные ключи для company_bank: 'company_id', 'bank_id'
+        (нужны если запись CompanyBank ещё не создана и её нужно создать).
+        """
+        app = await self.application_repo.get_with_relations(app_id)
+        if not app:
+            return [{'key': 'app', 'label': 'Заявка не найдена',
+                     'model': None, 'model_id': None, 'attr': None}]
+
+        co = app.company
+        bank = app.bank
+        missing = []
+
+        if bank:
+            if not bank.bik:
+                missing.append({
+                    'key': 'bank.bik', 'label': 'БИК банка',
+                    'model': 'bank', 'model_id': bank.id, 'attr': 'bik',
+                })
+            if not bank.corr_account:
+                missing.append({
+                    'key': 'bank.corr_account', 'label': 'Корреспондентский счёт банка',
+                    'model': 'bank', 'model_id': bank.id, 'attr': 'corr_account',
+                })
+
+        if co:
+            if not co.kpp:
+                missing.append({
+                    'key': 'company.kpp', 'label': 'КПП компании',
+                    'model': 'company', 'model_id': co.id, 'attr': 'kpp',
+                })
+            if not co.director_name:
+                missing.append({
+                    'key': 'company.director_name', 'label': 'ФИО руководителя',
+                    'model': 'company', 'model_id': co.id, 'attr': 'director_name',
+                })
+            if co and bank and self.company_repo:
+                cb = await self.company_repo.get_company_bank_for_invoice(co.id, bank.id)
+                if not cb or not cb.account_number:
+                    missing.append({
+                        'key': 'company_bank.account_number',
+                        'label': 'Расчётный счёт компании в банке',
+                        'model': 'company_bank',
+                        'model_id': cb.id if cb else None,
+                        'attr': 'account_number',
+                        'company_id': co.id,
+                        'bank_id': bank.id,
+                    })
+
+        return missing
+
     def _resolve_image_path(self, raw_path: str | None, label: str) -> str | None:
         """Разрешает путь к изображению (относительный или абсолютный)."""
         if not raw_path:
