@@ -359,24 +359,28 @@ class SupervisorHandlers:
             # Генерируем счёт
             invoice_number = None
             if self.document_service:
-                file_path = await self.document_service.generate_invoice(app_id)
-                if file_path:
-                    # Получаем номер из БД
-                    doc = await self.document_repo.get_latest_invoice(app_id)
-                    if doc:
-                        invoice_number = doc.number
+                missing = await self.document_service.validate_invoice_data(app_id)
+                if missing:
+                    if self.notification_service:
+                        await self.notification_service.notify_accountants_missing_invoice_data(app, missing)
+                else:
+                    file_path = await self.document_service.generate_invoice(app_id)
+                    if file_path:
+                        doc = await self.document_repo.get_latest_invoice(app_id)
+                        if doc:
+                            invoice_number = doc.number
 
-            invoice_text = ""
             if invoice_number:
-                invoice_text = f"🧾 Счёт: <b>{invoice_number}</b>\n"
+                invoice_text = f"🧾 Счёт: <b>{invoice_number}</b>\n📄 Счёт отправлен бухгалтеру.\n"
+            else:
+                invoice_text = "⚠️ Бухгалтеру отправлен запрос на заполнение данных для счёта.\n"
 
             await callback.message.edit_text(
                 f"✅ <b>Заявка одобрена!</b>\n\n"
                 f"📋 {format_application_number(app, for_client=True)}\n"
                 f"💰 {app.amount:,.0f}₽\n\n"
                 f"🎉 Все подписи собраны.\n"
-                f"{invoice_text}"
-                f"📄 Счёт отправлен бухгалтеру.",
+                f"{invoice_text}",
                 reply_markup=self.kb.back_to_menu(),
                 parse_mode="HTML"
             )
@@ -433,23 +437,27 @@ class SupervisorHandlers:
                 # Генерируем счёт
                 invoice_number = None
                 if self.document_service:
-                    file_path = await self.document_service.generate_invoice(app_id)
-                    if file_path:
-                        # Получаем номер из БД
-                        doc = await self.document_repo.get_latest_invoice(app_id)
-                        if doc:
-                            invoice_number = doc.number
+                    missing = await self.document_service.validate_invoice_data(app_id)
+                    if missing:
+                        if self.notification_service:
+                            await self.notification_service.notify_accountants_missing_invoice_data(app, missing)
+                    else:
+                        file_path = await self.document_service.generate_invoice(app_id)
+                        if file_path:
+                            doc = await self.document_repo.get_latest_invoice(app_id)
+                            if doc:
+                                invoice_number = doc.number
 
-                invoice_text = ""
                 if invoice_number:
-                    invoice_text = f"🧾 Счёт: <b>{invoice_number}</b>\n"
+                    invoice_text = f"🧾 Счёт: <b>{invoice_number}</b>\n📄 Счёт отправлен бухгалтеру.\n"
+                else:
+                    invoice_text = "⚠️ Бухгалтеру отправлен запрос на заполнение данных для счёта.\n"
 
                 await callback.message.edit_text(
                     f"✅ <b>Заявка одобрена!</b>\n\n"
                     f"📋 {format_application_number(app, for_client=True)}\n"
                     f"💰 {app.amount:,.0f}₽\n\n"
-                    f"{invoice_text}"
-                    f"📄 Счёт отправлен бухгалтеру.",
+                    f"{invoice_text}",
                     reply_markup=self.kb.back_to_menu(),
                     parse_mode="HTML"
                 )

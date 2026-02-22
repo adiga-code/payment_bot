@@ -169,7 +169,9 @@ class PaymentBot:
             log_repo=self.log_repo,
             bot=self.Bot,
             notification_service=self.notification_service,
-            document_service=self.document_service
+            document_service=self.document_service,
+            bank_repo=self.bank_repo,
+            company_bank_repo=self.company_bank_repo,
         )
 
         # Регистрация роутеров

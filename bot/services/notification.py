@@ -180,6 +180,23 @@ class NotificationService:
         for acc in accountants:
             await self._safe_send(acc.telegram_id, text)
 
+    async def notify_accountants_missing_invoice_data(self, app, missing: list[dict]) -> None:
+        """Уведомить бухгалтеров о недостающих данных для генерации счёта"""
+        from keyboards.accountant_kb import AccountantKeyboards
+
+        accountants = await self.user_repo.get_accountants()
+        fields_text = "\n".join(f"  • {f['label']}" for f in missing)
+        text = (
+            f"⚠️ <b>Заявка одобрена, но не хватает данных для счёта</b>\n\n"
+            f"📋 Заявка: {app.external_id}\n"
+            f"💰 Сумма: <b>{app.amount:,.0f}₽</b>\n\n"
+            f"❌ Не заполнены обязательные поля:\n{fields_text}\n\n"
+            f"Нажмите кнопку ниже для поочерёдного заполнения."
+        )
+        kb = AccountantKeyboards.fill_invoice_data(app.id)
+        for acc in accountants:
+            await self._safe_send(acc.telegram_id, text, reply_markup=kb)
+
     async def notify_accountant_payment_confirmed(self, app):
         """Уведомить бухгалтеров о подтверждении оплаты клиентом"""
         from keyboards.accountant_kb import AccountantKeyboards
